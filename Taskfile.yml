@@ -1,0 +1,112 @@
+# ntcharts-pdfview - Copyright (c) 2026 Neomantra Corp.
+
+version: '3'
+
+tasks:
+  default:
+    desc: 'Default task runs the "build" task'
+    deps:
+      - build
+
+  list:
+    desc: 'Lists available tasks'
+    cmds:
+      - task --list-all
+
+###############################################################################
+
+  go-tidy:
+    desc: 'Go tidy all the things'
+    run: once
+    cmds:
+      - go mod tidy
+
+  go-update:
+    desc: 'Go update all the dependencies'
+    run: once
+    cmds:
+      - go get -u ./...
+
+  test:
+    desc: 'Run all Go tests'
+    cmds:
+      - go test ./...
+
+  build:
+    desc: 'Build all the things'
+    deps:
+      - build-examples
+
+  clean:
+    desc: 'Clean built examples'
+    cmds:
+      - rm -f bin/ntcharts-pdfview
+      - rm -rf .task
+
+###############################################################################
+# Examples
+
+  build-examples:
+    desc: 'Build all examples'
+    deps:
+      - build-ex-pdfview
+
+  build-ex-pdfview:
+    desc: 'Build the pdfview example'
+    deps:
+      - go-tidy
+    cmds:
+      - go build -o bin/ntcharts-pdfview ./examples/pdfview
+    sources:
+      - pdfview/**/*.go
+      - examples/pdfview/*.go
+      - go.mod
+    generates:
+      - bin/ntcharts-pdfview
+
+###############################################################################
+# Demo gif (note: Kitty graphics do not render in VHS — this captures the
+# half-block path only; do a hand-made recording for Kitty-mode demos).
+
+  vhs-validate:
+    desc: 'Validate vhs tape file'
+    cmds:
+      - vhs validate ./examples/pdfview/demo.tape
+
+  vhs:
+    desc: 'Generate gif via vhs'
+    deps:
+      - build-ex-pdfview
+    cmds:
+      - vhs --output ./examples/pdfview/demo.gif ./examples/pdfview/demo.tape
+
+###############################################################################
+# Demo website via booba
+
+  build-wasm-site:
+    desc: 'Build the WASM demo site into web/'
+    deps: [go-tidy]
+    cmds:
+      - GOARCH=wasm GOOS=js go build -o web/app.wasm ./examples/pdfview/
+      - go tool booba-assets web/
+    generates:
+      - web/app.wasm
+
+  serve-wasm-site:
+    desc: 'Serve web/ at http://localhost:8000/ntcharts-pdf/ (matches GH Pages prefix)'
+    deps: [build-wasm-site]
+    vars:
+      SERVE_DIR: /tmp/ntcharts-pdf-site
+    cmds:
+      - mkdir -p {{.SERVE_DIR}}
+      - rm -f {{.SERVE_DIR}}/ntcharts-pdf
+      - ln -sfn "$(pwd)/web" {{.SERVE_DIR}}/ntcharts-pdf
+      - echo 'Serving at http://localhost:8000/ntcharts-pdf/'
+      - cd {{.SERVE_DIR}} && python3 -m http.server 8000
+
+  clean-wasm-site:
+    desc: 'Remove WASM demo site artifacts'
+    cmds:
+      - rm -rf web/_assets/booba web/_assets/ghostty-web
+      - rm -f web/_assets/wasm_exec.js web/_assets/index.html
+      - rm -f web/app.wasm

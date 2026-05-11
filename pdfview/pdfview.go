@@ -1,0 +1,509 @@
+// Package pdfview is a Bubble Tea v2 widget that renders PDF documents in
+// the terminal. It offers two modes:
+//
+//   - TextMode extracts plain text via ledongthuc/pdf (pure Go, WASM-safe)
+//     and substitutes glyph placeholders for embedded images.
+//   - ImageMode rasterizes each page via a per-document Renderer and
+//     feeds the bitmap to ntcharts/v2/picture, which renders Kitty
+//     graphics when the terminal supports it and falls back to half-
+//     block glyphs otherwise.
+//
+// ImageMode is opt-in: callers either supply Config.RendererFactory or
+// rely on DefaultRendererFactory — go-pdfium (PDFium-via-wazero,
+// CGO-free) for native builds, nil for js/wasm (where wazero's host
+// syscalls aren't available).
+//
+// Mirrors the wrapping idioms of the sibling ntcharts-osm/mapview widget:
+// value-receiver Update returning (Model, tea.Cmd), View returning a
+// tea.View so Kitty graphics can ride through, and a KeyMap a host program
+// can override field-by-field.
+package pdfview
+
+import (
+	"fmt"
+	"image"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/NimbleMarkets/ntcharts/v2/picture"
+)
+
+// Model is the pdfview widget. Use New or NewWithConfig to construct.
+type Model struct {
+	cfg   Config
+	keys  KeyMap
+	style Styles
+
+	pic        picture.Model
+	cols, rows int
+
+	path string
+	page int // 1-indexed; 0 means "no document loaded"
+	mode Mode
+
+	// docPages holds the per-page positioned-text + image-count caches.
+	// Indexed by page-1. NumPages() returns len(docPages).
+	docPages []pdfPage
+
+	// sourceImage is the un-cropped image returned by the most recent
+	// Renderer.RenderPage call (or SetPageImage). nil until the first
+	// successful render for the current document. Cropped on demand to
+	// the (zoom, panX, panY) viewport before being handed to picture.Model.
+	sourceImage image.Image
+
+	// Viewport state. zoom 0 means "fit the whole page to the cell rect"
+	// (no crop). zoom N (N >= 1) means crop the source to a 1/(2^N) ×
+	// 1/(2^N) sub-rectangle; picture.Model then scales that back up to
+	// the cell rect, producing the chunky/dithered look that lets you
+	// see individual rasterized glyphs.
+	//
+	// panX, panY are the normalized [0, 1] coordinates of the visible
+	// viewport's top-left corner inside the source image. Stored
+	// normalized (not in pixels) so the viewport survives a re-render
+	// at a different DPI / cell rect.
+	zoom         int
+	panX, panY   float64
+
+	// cur is the Renderer for the currently-loaded PDF, opened via
+	// cfg.RendererFactory in the SetPDF load Cmd. nil while no document is
+	// loaded or when the factory is nil (typical on js/wasm). Closed and
+	// replaced by every successful SetPDF; closed by Model.Close.
+	cur Renderer
+
+	// rendererErr is the most recent factory error, persisted (unlike
+	// err, which is cleared on the next successful op) so hosts can
+	// keep displaying it for the lifetime of the current document.
+	// Cleared on SetPDF.
+	rendererErr error
+
+	// loadGen / renderGen serialize async work. Every SetPDF bumps loadGen;
+	// every page rasterize bumps renderGen. Stale msgs are dropped by
+	// comparing generation counters in Update.
+	//
+	// Pointers so the counters survive Bubble Tea's value-receiver idiom —
+	// Init / Update / View receive a copy of Model, but the shared *uint64
+	// keeps every copy in sync with the live counter.
+	loadGen   *uint64
+	renderGen *uint64
+
+	err error
+}
+
+// New constructs a Model with the given cell rectangle and default config.
+func New(cols, rows int) Model {
+	return NewWithConfig(Config{Cols: cols, Rows: rows})
+}
+
+// NewWithConfig constructs a Model from a Config. Zero-valued style fields
+// are filled in from DefaultStyles.
+func NewWithConfig(cfg Config) Model {
+	if cfg.InitialPage <= 0 {
+		cfg.InitialPage = 1
+	}
+	if cfg.RendererFactory == nil {
+		cfg.RendererFactory = DefaultRendererFactory()
+	}
+	if cfg.RenderDPI <= 0 {
+		cfg.RenderDPI = DefaultRenderDPI
+	}
+	styles := DefaultStyles()
+	if cfg.Styles != nil {
+		styles = *cfg.Styles
+	}
+
+	var lg, rg uint64
+	m := Model{
+		cfg:       cfg,
+		keys:      DefaultKeyMap(),
+		style:     styles,
+		pic:       picture.NewWithConfig(cfg.PictureConfig),
+		cols:      cfg.Cols,
+		rows:      cfg.Rows,
+		mode:      cfg.DefaultMode,
+		page:      cfg.InitialPage,
+		// path is set up-front when InitialPath is configured so View()
+		// can show a "Loading…" or error state while the async load
+		// kicks off in Init(). Without this, a failed initial load
+		// hides behind "No document loaded".
+		path:      cfg.InitialPath,
+		loadGen:   &lg,
+		renderGen: &rg,
+	}
+	if c := m.pic.SetSize(cfg.Cols, cfg.Rows); c != nil {
+		// SetSize during construction can't deliver a Cmd; the renderer
+		// has nothing to render anyway. Drop the no-op.
+		_ = c
+	}
+	return m
+}
+
+// Mode returns the current rendering mode.
+func (m Model) Mode() Mode { return m.mode }
+
+// RenderMode returns the underlying picture protocol used by ImageMode.
+func (m Model) RenderMode() RenderMode { return m.pic.Mode() }
+
+// Page returns the current 1-indexed page number (0 if no document loaded).
+func (m Model) Page() int { return m.page }
+
+// NumPages returns the page count of the loaded document, or 0.
+func (m Model) NumPages() int { return len(m.docPages) }
+
+// Err returns the last load or render error, cleared on the next successful
+// operation. Hosts can surface this in their status bar.
+func (m Model) Err() error { return m.err }
+
+// KittySupported reports the terminal's Kitty graphics capability. The
+// probe runs once per process (batched from Init via the underlying
+// picture.Model); expect KittyCapabilityUnknown for the first few frames
+// until the terminal responds (typically <50ms).
+func (m Model) KittySupported() picture.KittyCapability { return m.pic.KittySupported() }
+
+// HasRenderer reports whether an active Renderer is attached to the
+// currently-loaded document. False means ImageMode requests will fall
+// back to TextMode at View() time — either no factory is configured, or
+// the factory was tried and errored (check RendererErr for the reason).
+func (m Model) HasRenderer() bool { return m.cur != nil }
+
+// RendererErr returns the most recent RendererFactory error, or nil. The
+// load otherwise succeeded — TextMode works fine; only ImageMode is
+// unavailable. Cleared on SetPDF.
+func (m Model) RendererErr() error { return m.rendererErr }
+
+// Close releases any renderer-side resources held by the currently-loaded
+// document (e.g. pdfium document handle and pool instance). Safe to call
+// when no document is loaded. Hosts should call this on shutdown when
+// they want a clean exit; leaking the renderer at process exit is fine
+// for short-lived TUIs.
+func (m *Model) Close() error {
+	if m.cur == nil {
+		return nil
+	}
+	err := m.cur.Close()
+	m.cur = nil
+	return err
+}
+
+// KeyMap exposes the active bindings; mutate fields to rebind.
+func (m *Model) KeyMap() *KeyMap { return &m.keys }
+
+// SetSize updates the cell rectangle and forwards to the picture.Model.
+// The returned Cmd may carry a Kitty re-placement frame; batch it through
+// the program's tea.Cmd pipeline.
+func (m *Model) SetSize(cols, rows int) tea.Cmd {
+	m.cols, m.rows = cols, rows
+	cmd := m.pic.SetSize(cols, rows)
+	// Re-rasterize the current page at the new size when in ImageMode
+	// and we have something loaded.
+	if m.mode == ImageMode && m.path != "" && m.page > 0 {
+		return tea.Batch(cmd, m.renderPageCmd(m.page))
+	}
+	return cmd
+}
+
+// SetPDF loads a PDF from disk and resets the current page to InitialPage.
+// Returns a Cmd that performs text extraction + renderer open off the UI
+// goroutine; on completion the widget's Update consumes a pdfLoadedMsg
+// (or pdfErrMsg on failure). Closes any previously-loaded renderer
+// synchronously before the new load dispatches.
+func (m *Model) SetPDF(path string) tea.Cmd {
+	if m.cur != nil {
+		_ = m.cur.Close()
+		m.cur = nil
+	}
+	m.path = path
+	m.page = m.cfg.InitialPage
+	m.docPages = nil
+	m.sourceImage = nil
+	m.rendererErr = nil
+	// Reset viewport on document change. Per-page viewport persistence is
+	// useful for flipping through a book at fixed zoom; switching docs
+	// always starts fit-to-page.
+	m.zoom, m.panX, m.panY = 0, 0, 0
+	m.err = nil
+	gen := bump(m.loadGen)
+	// Invalidate any in-flight render from the previous document — without
+	// this bump, a stale pageRenderedMsg whose page happens to match the
+	// new document's current page would be accepted as fresh.
+	bump(m.renderGen)
+	return loadPDFCmd(path, gen, m.cfg.RendererFactory)
+}
+
+// SetPage jumps to the given 1-indexed page. Returns a render Cmd when
+// ImageMode is active; in TextMode the cached text is shown immediately
+// and the returned Cmd is nil.
+func (m *Model) SetPage(n int) tea.Cmd {
+	if len(m.docPages) == 0 {
+		return nil
+	}
+	if n < 1 {
+		n = 1
+	}
+	if n > len(m.docPages) {
+		n = len(m.docPages)
+	}
+	if n == m.page {
+		return nil
+	}
+	m.page = n
+	m.sourceImage = nil
+	if m.mode == ImageMode {
+		return m.renderPageCmd(n)
+	}
+	return nil
+}
+
+// NextPage advances one page (clamped).
+func (m *Model) NextPage() tea.Cmd { return m.SetPage(m.page + 1) }
+
+// PrevPage moves back one page (clamped).
+func (m *Model) PrevPage() tea.Cmd { return m.SetPage(m.page - 1) }
+
+// ToggleMode swaps Text↔Image. Switching into ImageMode triggers a render
+// of the current page; switching back to TextMode clears the picture image
+// so the terminal doesn't leave a stale Kitty placement on screen.
+func (m *Model) ToggleMode() tea.Cmd {
+	if m.mode == TextMode {
+		m.mode = ImageMode
+		if m.path != "" && m.page > 0 {
+			return m.renderPageCmd(m.page)
+		}
+		return nil
+	}
+	m.mode = TextMode
+	// Drop any on-screen Kitty placement.
+	return m.pic.SetImage(nil)
+}
+
+// ToggleRenderMode swaps Glyph↔Kitty for ImageMode rendering.
+func (m *Model) ToggleRenderMode() tea.Cmd { return m.pic.Toggle() }
+
+// Reload re-rasterizes the current page in ImageMode (no-op in TextMode).
+func (m *Model) Reload() tea.Cmd {
+	if m.mode != ImageMode || m.path == "" || m.page == 0 {
+		return nil
+	}
+	return m.renderPageCmd(m.page)
+}
+
+// SetPageImage installs a caller-supplied image for the given 1-indexed
+// page. Useful when the host has its own renderer pipeline (e.g. a server
+// pre-rasterizes pages and ships PNG bytes). Replaces the current page's
+// image when page == m.Page() and re-applies the current viewport.
+func (m *Model) SetPageImage(page int, img image.Image) tea.Cmd {
+	if page <= 0 || page != m.page {
+		return nil
+	}
+	m.sourceImage = img
+	return m.applyViewport()
+}
+
+// Zoom returns the current zoom level (0 = fit whole page; N >= 1 = each
+// axis cropped to 1/2^N of the source).
+func (m Model) Zoom() int { return m.zoom }
+
+// ZoomIn doubles the visible magnification, recentering on the current
+// viewport center. Caps at zoomMax to keep the cropped rectangle from
+// disappearing entirely. No-op outside ImageMode or before a source
+// image has been rendered.
+func (m *Model) ZoomIn() tea.Cmd {
+	if m.mode != ImageMode || m.sourceImage == nil || m.zoom >= zoomMax {
+		return nil
+	}
+	cx, cy := m.viewportCenter()
+	m.zoom++
+	m.recenterTo(cx, cy)
+	return m.applyViewport()
+}
+
+// ZoomOut halves the magnification (toward fit-to-page), recentering on
+// the current viewport center. No-op when already at zoom 0.
+func (m *Model) ZoomOut() tea.Cmd {
+	if m.mode != ImageMode || m.sourceImage == nil || m.zoom <= 0 {
+		return nil
+	}
+	cx, cy := m.viewportCenter()
+	m.zoom--
+	m.recenterTo(cx, cy)
+	return m.applyViewport()
+}
+
+// PanLeft, PanRight, PanUp, PanDown shift the viewport by panStep of its
+// own width / height. They no-op outside ImageMode, when no source is
+// loaded, or when zoom == 0 (the whole page fits — nothing to pan into).
+func (m *Model) PanLeft() tea.Cmd  { return m.pan(-1, 0) }
+func (m *Model) PanRight() tea.Cmd { return m.pan(+1, 0) }
+func (m *Model) PanUp() tea.Cmd    { return m.pan(0, -1) }
+func (m *Model) PanDown() tea.Cmd  { return m.pan(0, +1) }
+
+// Fit returns the current FitMode (how the image is mapped onto the cell
+// rectangle when rendered by picture.Model).
+func (m Model) Fit() FitMode { return m.pic.Fit() }
+
+// CycleFit advances the FitMode through Contain → Fill → Cover → Contain.
+// Returns picture.Model's re-render Cmd; safe to call in any mode (no-op
+// effect when sourceImage is nil but the Cmd still bumps picture's seq).
+func (m *Model) CycleFit() tea.Cmd {
+	next := FitContain
+	switch m.pic.Fit() {
+	case FitContain:
+		next = FitFill
+	case FitFill:
+		next = FitCover
+	case FitCover:
+		next = FitContain
+	}
+	return m.pic.SetFit(next)
+}
+
+// ResetView snaps zoom to 0 and pan to the page origin (i.e. fit-to-rect
+// with no crop). Useful as a "0" hotkey escape hatch.
+func (m *Model) ResetView() tea.Cmd {
+	if m.mode != ImageMode || m.sourceImage == nil {
+		m.zoom, m.panX, m.panY = 0, 0, 0
+		return nil
+	}
+	if m.zoom == 0 && m.panX == 0 && m.panY == 0 {
+		return nil
+	}
+	m.zoom, m.panX, m.panY = 0, 0, 0
+	return m.applyViewport()
+}
+
+// Init returns a Cmd that kicks off InitialPath loading (if set) plus the
+// picture model's own init (Kitty capability probe). The pdfLoadedMsg
+// delivered later populates m.path and the page cache via Update — no
+// value-receiver mutation needed here.
+func (m Model) Init() tea.Cmd {
+	cmds := []tea.Cmd{m.pic.Init()}
+	if m.cfg.InitialPath != "" {
+		gen := bump(m.loadGen)
+		cmds = append(cmds, loadPDFCmd(m.cfg.InitialPath, gen, m.cfg.RendererFactory))
+	}
+	return tea.Batch(cmds...)
+}
+
+// bump increments *p and returns the new value. Sole writer is the UI
+// goroutine (Bubble Tea Update loop), so no atomic ordering is needed —
+// the pointer indirection exists only so value-receiver method copies
+// share a single counter.
+func bump(p *uint64) uint64 {
+	*p++
+	return *p
+}
+
+// Update routes messages through the picture.Model and consumes the
+// widget's own async load/render notifications.
+func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	switch msg := msg.(type) {
+	case pdfLoadedMsg:
+		if msg.gen != *m.loadGen {
+			// Stale load: a newer SetPDF superseded it. Close the Renderer
+			// the stale load built so we don't leak its document handle /
+			// pdfium pool instance.
+			if msg.renderer != nil {
+				_ = msg.renderer.Close()
+			}
+			break
+		}
+		m.path = msg.path
+		m.docPages = msg.pages
+		m.cur = msg.renderer
+		m.rendererErr = msg.rendererErr
+		m.err = nil
+		if m.page > len(m.docPages) {
+			m.page = len(m.docPages)
+		}
+		if m.page < 1 {
+			m.page = 1
+		}
+		if m.mode == ImageMode {
+			cmds = append(cmds, m.renderPageCmd(m.page))
+		}
+
+	case pdfErrMsg:
+		if msg.gen == *m.loadGen {
+			m.err = msg.err
+		}
+
+	case pageRenderedMsg:
+		if msg.gen != *m.renderGen || msg.loadGen != *m.loadGen || msg.page != m.page {
+			break // stale doc, stale render, or page changed under us
+		}
+		m.sourceImage = msg.img
+		m.err = nil
+		if c := m.applyViewport(); c != nil {
+			cmds = append(cmds, c)
+		}
+
+	case pageRenderErrMsg:
+		if msg.gen == *m.renderGen && msg.loadGen == *m.loadGen && msg.page == m.page {
+			m.err = msg.err
+		}
+	}
+
+	// Forward all messages — including the ones we just handled — to the
+	// picture model so it can react to Kitty frame applications and resize
+	// notifications. picture.Update is a no-op for messages it doesn't
+	// recognize.
+	if c := m.pic.Update(msg); c != nil {
+		cmds = append(cmds, c)
+	}
+
+	return m, tea.Batch(cmds...)
+}
+
+// renderPageCmd returns a Cmd that dispatches a page render via the
+// currently-open Renderer. Returns nil when there is no Renderer (no
+// factory wired up, or the load Cmd hasn't completed yet) or no path
+// loaded; both cases are legitimate "ImageMode degrades to text"
+// fallbacks handled by View.
+//
+// The capture of *m.loadGen + bumped renderGen pins the render to a
+// specific (document, request) pair. The renderer pointer itself is
+// also captured, so a SetPDF-triggered Close on the previous Renderer
+// must serialize with this in-flight RenderPage call — see
+// pdfiumRenderer's sync.Mutex.
+func (m *Model) renderPageCmd(page int) tea.Cmd {
+	if m.cur == nil || m.path == "" {
+		return nil
+	}
+	gen := bump(m.renderGen)
+	loadGen := *m.loadGen
+	r := m.cur
+	dpi := m.cfg.RenderDPI
+	return func() tea.Msg {
+		img, err := r.RenderPage(page, dpi)
+		if err != nil {
+			return pageRenderErrMsg{err: err, page: page, gen: gen, loadGen: loadGen}
+		}
+		return pageRenderedMsg{page: page, img: img, gen: gen, loadGen: loadGen}
+	}
+}
+
+// View renders the current page according to the active mode. ImageMode
+// falls back to TextMode when no renderer is wired up or no image has
+// been rasterized yet — that's the WASM-friendly graceful degradation.
+func (m Model) View() tea.View {
+	// Error first: a load failure should not hide behind "No document
+	// loaded" just because m.path is unset (Init's load fail leaves it
+	// blank in older builds — and even with the NewWithConfig fix, an
+	// errored explicit SetPDF clears docPages and we want the error,
+	// not the empty-doc placeholder, to win).
+	if m.err != nil && len(m.docPages) == 0 {
+		return tea.NewView(m.style.Error.Render(fmt.Sprintf("error: %v", m.err)))
+	}
+	if m.path == "" {
+		return tea.NewView(m.style.Status.Render("No document loaded"))
+	}
+	if len(m.docPages) == 0 {
+		// Path set but pages not yet populated — async load in flight.
+		return tea.NewView(m.style.Status.Render(fmt.Sprintf("Loading %s…", m.path)))
+	}
+	if m.mode == ImageMode && m.sourceImage != nil {
+		return m.pic.View()
+	}
+	// Either TextMode, or ImageMode with no rasterized image yet.
+	return tea.NewView(m.renderTextPage())
+}
