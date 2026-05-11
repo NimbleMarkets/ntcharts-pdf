@@ -43,6 +43,58 @@ const (
 // each page rasterizes in well under a second on typical hardware.
 const DefaultRenderDPI = 300
 
+// Limits caps resource consumption when loading and rendering PDFs.
+// Defaults (applied when a field is zero) are conservative for hosts
+// that may handle untrusted documents — they keep a single document
+// from monopolising memory / CPU. Setting a field to a negative value
+// disables that cap entirely (use only with trusted input).
+type Limits struct {
+	// MaxFileBytes caps the byte size of the PDF file on disk that the
+	// default factory will read into memory. Zero = 256 MiB default.
+	MaxFileBytes int64
+
+	// MaxPages caps the number of pages a PDF may report. Zero = 10000
+	// default. A malformed or hostile PDF can claim millions of pages,
+	// causing make([]pdfPage, n) to OOM before any page is read.
+	MaxPages int
+
+	// MaxImagesPerPage caps the number of XObject image placeholders
+	// counted per page. Zero = 1024 default. Hostile /XObject dicts
+	// with millions of entries can't burn the load thread.
+	MaxImagesPerPage int
+
+	// MaxRenderDPI caps the effective DPI passed to Renderer.RenderPage.
+	// Zero = 600 default. Combined with MaxRenderPixels this puts a
+	// hard ceiling on rasterized bitmap memory.
+	MaxRenderDPI int
+
+	// MaxRenderPixels caps the projected pixel count of a rasterized
+	// page. The default renderer queries page dimensions before
+	// rendering and reduces DPI when the projected output would exceed
+	// this limit. Zero = 100 million pixel default (≈ 400 MB at RGBA).
+	MaxRenderPixels int
+}
+
+// applyDefaults fills zero-valued fields with the package defaults.
+// Negative values are preserved as the "unbounded" sentinel.
+func (l *Limits) applyDefaults() {
+	if l.MaxFileBytes == 0 {
+		l.MaxFileBytes = 256 << 20 // 256 MiB
+	}
+	if l.MaxPages == 0 {
+		l.MaxPages = 10_000
+	}
+	if l.MaxImagesPerPage == 0 {
+		l.MaxImagesPerPage = 1024
+	}
+	if l.MaxRenderDPI == 0 {
+		l.MaxRenderDPI = 600
+	}
+	if l.MaxRenderPixels == 0 {
+		l.MaxRenderPixels = 100_000_000
+	}
+}
+
 // KeyMap binds the widget's actions to keys. Disabled bindings (zero
 // key.Binding) let host programs hand the corresponding action off to
 // another widget.
@@ -138,6 +190,11 @@ type Config struct {
 	// RenderDPI controls the rasterization resolution passed to the
 	// Renderer. Zero falls back to DefaultRenderDPI.
 	RenderDPI int
+
+	// Limits caps resource consumption for untrusted documents. Zero-
+	// valued fields use sensible defaults (see Limits doc); set a field
+	// to -1 to disable that specific cap for trusted input.
+	Limits Limits
 
 	// PictureConfig is forwarded verbatim to the underlying picture.Model.
 	PictureConfig picture.Config

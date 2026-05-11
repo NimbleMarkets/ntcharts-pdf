@@ -99,11 +99,15 @@ func NewWithConfig(cfg Config) Model {
 	if cfg.InitialPage <= 0 {
 		cfg.InitialPage = 1
 	}
-	if cfg.RendererFactory == nil {
-		cfg.RendererFactory = DefaultRendererFactory()
-	}
 	if cfg.RenderDPI <= 0 {
 		cfg.RenderDPI = DefaultRenderDPI
+	}
+	cfg.Limits.applyDefaults()
+	if cfg.RendererFactory == nil {
+		cfg.RendererFactory = DefaultRendererFactoryWithLimits(cfg.Limits)
+	}
+	if cfg.RendererFactory != nil {
+		cfg.RendererFactory = withLimits(cfg.RendererFactory, cfg.Limits)
 	}
 	styles := DefaultStyles()
 	if cfg.Styles != nil {
@@ -225,7 +229,7 @@ func (m *Model) SetPDF(path string) tea.Cmd {
 	// this bump, a stale pageRenderedMsg whose page happens to match the
 	// new document's current page would be accepted as fresh.
 	bump(m.renderGen)
-	return loadPDFCmd(path, gen, m.cfg.RendererFactory)
+	return loadPDFCmd(path, gen, m.cfg.RendererFactory, m.cfg.Limits)
 }
 
 // SetPage jumps to the given 1-indexed page. Returns a render Cmd when
@@ -377,7 +381,7 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.pic.Init()}
 	if m.cfg.InitialPath != "" {
 		gen := bump(m.loadGen)
-		cmds = append(cmds, loadPDFCmd(m.cfg.InitialPath, gen, m.cfg.RendererFactory))
+		cmds = append(cmds, loadPDFCmd(m.cfg.InitialPath, gen, m.cfg.RendererFactory, m.cfg.Limits))
 	}
 	return tea.Batch(cmds...)
 }

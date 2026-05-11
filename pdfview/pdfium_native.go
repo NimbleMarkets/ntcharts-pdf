@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"math"
 	"os"
 	"sync"
 	"time"
@@ -62,16 +63,34 @@ type pdfiumRenderer struct {
 	mu       sync.Mutex
 	instance pdfium.Pdfium
 	docRef   references.FPDF_DOCUMENT
+
+	// maxRenderPixels caps the bitmap area of a single rasterized page.
+	// 0 = disabled. When the projected pixel count at the caller-supplied
+	// DPI exceeds the cap, RenderPage lowers the DPI in-place to fit
+	// rather than failing — graceful degradation matches the rest of
+	// the widget's "soft fail" defaults.
+	maxRenderPixels int
 }
 
 // DefaultRendererFactory returns a RendererFactory that opens documents
-// via go-pdfium's WASM backend. The pool is lazily initialised on the
-// first call so programs that never enter ImageMode pay nothing.
+// via go-pdfium's WASM backend with default Limits applied. The pool is
+// lazily initialised on the first call so programs that never enter
+// ImageMode pay nothing.
 //
-// Returns nil if pool initialisation fails — that's the same "no renderer"
-// degraded mode the WASM stub uses, so the host's status bar UX stays
-// consistent across platforms.
+// For most callers, NewWithConfig handles this automatically (it wraps
+// the returned factory with the file-size / DPI clamps too). Use
+// DefaultRendererFactoryWithLimits if you need tuned per-renderer caps.
 func DefaultRendererFactory() RendererFactory {
+	return DefaultRendererFactoryWithLimits(Limits{})
+}
+
+// DefaultRendererFactoryWithLimits is the same factory parameterised by
+// resource caps. The MaxRenderPixels cap is enforced inside the pdfium
+// renderer (it's the only layer that knows the page's physical
+// dimensions); MaxFileBytes / MaxRenderDPI are enforced by the
+// withLimits wrapper NewWithConfig applies over the top.
+func DefaultRendererFactoryWithLimits(limits Limits) RendererFactory {
+	limits.applyDefaults()
 	return func(path string) (Renderer, error) {
 		pdfiumOnce.Do(func() {
 			pdfiumPool, pdfiumErr = webassembly.Init(pdfiumPoolConfig())
@@ -98,8 +117,9 @@ func DefaultRendererFactory() RendererFactory {
 			return nil, fmt.Errorf("pdfium OpenDocument: %w", err)
 		}
 		return &pdfiumRenderer{
-			instance: inst,
-			docRef:   doc.Document,
+			instance:        inst,
+			docRef:          doc.Document,
+			maxRenderPixels: limits.MaxRenderPixels,
 		}, nil
 	}
 }
@@ -108,6 +128,12 @@ func DefaultRendererFactory() RendererFactory {
 // returned image is a deep copy of pdfium's internal RGBA buffer — pdfium
 // reclaims that buffer on Cleanup, so the copy is what makes the image
 // safe to hold past the call.
+//
+// When maxRenderPixels is set, the renderer queries pdfium for the
+// page's physical size and computes the projected pixel count at the
+// requested DPI. If the projection exceeds the budget, DPI is reduced
+// to fit (graceful degradation) — the user gets a chunkier render
+// rather than an error.
 func (r *pdfiumRenderer) RenderPage(pageNum, dpi int) (image.Image, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -119,6 +145,9 @@ func (r *pdfiumRenderer) RenderPage(pageNum, dpi int) (image.Image, error) {
 	}
 	if dpi <= 0 {
 		dpi = DefaultRenderDPI
+	}
+	if r.maxRenderPixels > 0 {
+		dpi = r.clampDPIToBudget(pageNum, dpi)
 	}
 	resp, err := r.instance.RenderPageInDPI(&requests.RenderPageInDPI{
 		Page: requests.Page{
@@ -143,6 +172,33 @@ func (r *pdfiumRenderer) RenderPage(pageNum, dpi int) (image.Image, error) {
 	out := *src
 	out.Pix = append([]byte(nil), src.Pix...)
 	return &out, nil
+}
+
+// clampDPIToBudget queries pdfium for the page's size in points and
+// returns a DPI clamped so that the rendered bitmap won't exceed
+// r.maxRenderPixels. Returns the original DPI if the query fails — a
+// missing page-size probe shouldn't block rendering, only stop our
+// best-effort budget enforcement.
+func (r *pdfiumRenderer) clampDPIToBudget(pageNum, dpi int) int {
+	sz, err := r.instance.FPDF_GetPageSizeByIndex(&requests.FPDF_GetPageSizeByIndex{
+		Document: r.docRef,
+		Index:    pageNum - 1,
+	})
+	if err != nil || sz.Width <= 0 || sz.Height <= 0 {
+		return dpi
+	}
+	wIn := sz.Width / 72.0
+	hIn := sz.Height / 72.0
+	projected := wIn * hIn * float64(dpi) * float64(dpi)
+	if projected <= float64(r.maxRenderPixels) {
+		return dpi
+	}
+	// max DPI satisfying wIn * hIn * DPI² <= budget
+	maxDPI := math.Sqrt(float64(r.maxRenderPixels) / (wIn * hIn))
+	if maxDPI < 1 {
+		maxDPI = 1
+	}
+	return int(maxDPI)
 }
 
 // Close releases the document and returns the instance to the pool. The

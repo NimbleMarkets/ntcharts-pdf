@@ -13,3 +13,8 @@ package pdfview
 // server-side rasterizer can wire up a custom RendererFactory that hits
 // their endpoint and returns an image.Image.
 func DefaultRendererFactory() RendererFactory { return nil }
+
+// DefaultRendererFactoryWithLimits accepts the limits argument for API
+// parity with the native build but ignores it — there's no renderer to
+// configure on js/wasm.
+func DefaultRendererFactoryWithLimits(_ Limits) RendererFactory { return nil }

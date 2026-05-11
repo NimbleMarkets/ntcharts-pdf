@@ -55,11 +55,20 @@ type pdfErrMsg struct {
 // counts per page, and (when factory is non-nil) opens a Renderer bound
 // to the document.
 //
+// Per-page extraction is recover-wrapped because ledongthuc/pdf's
+// Content() and Resources() walks can panic on malformed streams.
+// A panicking page yields an empty pdfPage rather than crashing the
+// Cmd — partial extraction is more useful than total failure for the
+// average untrusted PDF, and downstream image-only handling already
+// covers the empty-runs case.
+//
+// limits.MaxPages caps the slice allocation up front; an attacker
+// claiming billions of pages can't OOM us before the first read.
+//
 // Renderer-open failures don't fail the whole load: text mode still
-// works without a renderer, so we record the error in the pdfLoadedMsg's
-// numPages/text path and leave renderer=nil. The widget treats
-// "no renderer" as the ImageMode-falls-back-to-text case.
-func loadPDFCmd(path string, gen uint64, factory RendererFactory) tea.Cmd {
+// works without a renderer, so we record the error in the
+// pdfLoadedMsg's rendererErr field and leave renderer=nil.
+func loadPDFCmd(path string, gen uint64, factory RendererFactory, limits Limits) tea.Cmd {
 	return func() tea.Msg {
 		f, r, err := pdf.Open(path)
 		if err != nil {
@@ -71,22 +80,15 @@ func loadPDFCmd(path string, gen uint64, factory RendererFactory) tea.Cmd {
 		if n <= 0 {
 			return pdfErrMsg{err: errors.New("pdf reports zero pages"), gen: gen}
 		}
+		if limits.MaxPages > 0 && n > limits.MaxPages {
+			return pdfErrMsg{
+				err: fmt.Errorf("pdf reports %d pages, exceeds MaxPages=%d", n, limits.MaxPages),
+				gen: gen,
+			}
+		}
 		pages := make([]pdfPage, n)
 		for i := 1; i <= n; i++ {
-			page := r.Page(i)
-			if page.V.IsNull() {
-				pages[i-1] = pdfPage{media: defaultMediaBox()}
-				continue
-			}
-			content := page.Content()
-			// Content() can panic on malformed streams in older lib
-			// versions; the panic-recover is intentionally narrow.
-			runs := content.Text
-			pages[i-1] = pdfPage{
-				runs:       runs,
-				media:      pageMediaBox(page),
-				imageCount: countPageImages(page),
-			}
+			pages[i-1] = extractPage(r.Page(i), limits)
 		}
 
 		var renderer Renderer
@@ -106,6 +108,29 @@ func loadPDFCmd(path string, gen uint64, factory RendererFactory) tea.Cmd {
 			gen:         gen,
 		}
 	}
+}
+
+// extractPage pulls positioned text + image-count from a single page,
+// guarded by a recover so a malformed page can't crash the load Cmd.
+// On panic it returns a zero-valued pdfPage with just the default media
+// box, which renderTextPage handles cleanly as an empty page.
+func extractPage(page pdf.Page, limits Limits) (out pdfPage) {
+	out.media = defaultMediaBox()
+	if page.V.IsNull() {
+		return out
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			// Reset to minimal-safe state. Don't propagate — the
+			// reviewer's DoS hardening explicitly asked for per-page
+			// failures to stay local.
+			out = pdfPage{media: defaultMediaBox()}
+		}
+	}()
+	out.media = pageMediaBox(page)
+	out.runs = page.Content().Text
+	out.imageCount = countPageImages(page, limits.MaxImagesPerPage)
+	return out
 }
 
 // pageMediaBox walks the page-tree node chain looking for the first
@@ -134,8 +159,10 @@ func defaultMediaBox() mediaBox { return mediaBox{0, 0, 612, 792} }
 
 // countPageImages walks /Resources/XObject and counts entries whose
 // Subtype is "Image". Returns 0 when the dictionary is absent — image
-// placeholders are a nice-to-have, never load-blocking.
-func countPageImages(p pdf.Page) int {
+// placeholders are a nice-to-have, never load-blocking. maxImages > 0
+// short-circuits the count once the cap is reached; a hostile dict
+// with millions of entries can't burn the load goroutine.
+func countPageImages(p pdf.Page, maxImages int) int {
 	xobj := p.Resources().Key("XObject")
 	if xobj.IsNull() {
 		return 0
@@ -145,6 +172,9 @@ func countPageImages(p pdf.Page) int {
 		entry := xobj.Key(k)
 		if entry.Key("Subtype").Name() == "Image" {
 			count++
+			if maxImages > 0 && count >= maxImages {
+				return count
+			}
 		}
 	}
 	return count
