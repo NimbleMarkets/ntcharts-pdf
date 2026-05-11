@@ -102,6 +102,22 @@ func DefaultRendererFactoryWithLimits(limits Limits) RendererFactory {
 			return nil, errors.New("pdfium pool not initialised")
 		}
 
+		// MaxFileBytes is enforced here, in the local-filesystem renderer,
+		// rather than the universal factory wrapper — only filesystem
+		// paths support os.Stat. Custom factories using URLs / IDs /
+		// in-memory handles wouldn't benefit from a stat-based check.
+		if limits.MaxFileBytes > 0 {
+			info, err := os.Stat(path)
+			if err != nil {
+				return nil, fmt.Errorf("stat %q: %w", path, err)
+			}
+			if info.Size() > limits.MaxFileBytes {
+				return nil, fmt.Errorf(
+					"PDF %q is %d bytes, exceeds MaxFileBytes=%d",
+					path, info.Size(), limits.MaxFileBytes,
+				)
+			}
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("read %q: %w", path, err)

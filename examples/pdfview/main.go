@@ -16,8 +16,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
-	"unicode"
 
 	booba "github.com/NimbleMarkets/go-booba"
 	"charm.land/bubbles/v2/help"
@@ -28,27 +26,6 @@ import (
 	"github.com/NimbleMarkets/ntcharts/v2/picture"
 	"github.com/NimbleMarkets/ntcharts-pdf/pdfview"
 )
-
-// sanitizeStatus strips terminal-control / bidi format / non-printable
-// runes from a string before it reaches the status bar. Mirrors
-// pdfview's internal sanitizer; kept local to the example so it
-// doesn't expand the widget's public surface for what's a host
-// concern.
-func sanitizeStatus(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		switch r {
-		case '\n', '\r', '\t', '\v', '\f':
-			b.WriteByte(' ')
-			continue
-		}
-		if unicode.IsPrint(r) {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
 
 var (
 	boxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
@@ -168,49 +145,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "?":
 			m.help.ShowAll = !m.help.ShowAll
 			return m, m.resize()
-		case "m", "t":
-			return m, m.pv.ToggleMode()
-		case "g":
-			return m, m.pv.ToggleRenderMode()
-		case "r":
-			return m, m.pv.Reload()
-		case "+", "=":
-			return m, m.pv.ZoomIn()
-		case "-", "_":
-			return m, m.pv.ZoomOut()
-		case "0":
-			return m, m.pv.ResetView()
-		case "f":
-			return m, m.pv.CycleFit()
-		case "n", "l":
-			return m, m.pv.NextPage()
-		case "p", "h":
-			return m, m.pv.PrevPage()
 
-		// Arrow keys are modal: pan when ImageMode is active and zoom
-		// is engaged (otherwise nothing to pan into), otherwise treat
-		// left/right as prev/next page so the keys stay useful in
-		// TextMode and at zoom=0.
+		// Modal arrow-key policy lives here, not in the widget:
+		// "arrow at zoom 0 = page nav" is host-specific. When the
+		// widget is actually zoomed, fall through to the widget so
+		// its KeyMap dispatches the pan action.
 		case "left":
-			if m.pv.Mode() == pdfview.ImageMode && m.pv.Zoom() > 0 {
-				return m, m.pv.PanLeft()
+			if m.pv.Mode() != pdfview.ImageMode || m.pv.Zoom() == 0 {
+				return m, m.pv.PrevPage()
 			}
-			return m, m.pv.PrevPage()
 		case "right":
-			if m.pv.Mode() == pdfview.ImageMode && m.pv.Zoom() > 0 {
-				return m, m.pv.PanRight()
-			}
-			return m, m.pv.NextPage()
-		case "up":
-			if m.pv.Mode() == pdfview.ImageMode && m.pv.Zoom() > 0 {
-				return m, m.pv.PanUp()
-			}
-		case "down":
-			if m.pv.Mode() == pdfview.ImageMode && m.pv.Zoom() > 0 {
-				return m, m.pv.PanDown()
+			if m.pv.Mode() != pdfview.ImageMode || m.pv.Zoom() == 0 {
+				return m, m.pv.NextPage()
 			}
 		}
 	}
+
+	// All other key + non-key messages flow through the widget. The
+	// widget's Update routes KeyMsg through its KeyMap, calling the
+	// matching action methods (NextPage / ToggleMode / ZoomIn / etc.).
 
 	var cmd tea.Cmd
 	m.pv, cmd = m.pv.Update(msg)
@@ -238,7 +191,7 @@ func (m model) View() tea.View {
 			// hostile filenames or PDF-derived bytes.
 			label := "Image (no renderer)"
 			if err := m.pv.RendererErr(); err != nil {
-				label = fmt.Sprintf("Image (renderer error: %s)", sanitizeStatus(err.Error()))
+				label = fmt.Sprintf("Image (renderer error: %s)", pdfview.SanitizeForTerminal(err.Error()))
 			}
 			modeName = badgeWarnStyle.Render(label)
 		}

@@ -1,43 +1,26 @@
-// pdfview/limits.go: RendererFactory wrapper that enforces resource caps.
-//
-// withLimits is platform-independent — it wraps any RendererFactory
-// (the default pdfium one, a user's custom factory, the test fake)
-// with a thin layer that performs a pre-open file-size check and
-// clamps the per-call DPI parameter. MaxRenderPixels enforcement is
-// the renderer's responsibility because only it knows the page's
-// physical dimensions; the pdfium renderer queries pdfium directly
-// and reduces DPI to fit the budget rather than failing the call.
+// pdfview/limits.go: RendererFactory wrapper that enforces caps that
+// don't depend on a Renderer's storage model (currently just per-call
+// DPI clamping). MaxFileBytes is enforced inside the default local
+// renderer because file-size checks via os.Stat only make sense for
+// filesystem paths — a custom factory might receive URLs, document
+// IDs, in-memory handles, or browser blob refs where os.Stat would
+// fail. MaxRenderPixels lives in the concrete renderer because only
+// it can query page dimensions.
 
 package pdfview
 
-import (
-	"fmt"
-	"image"
-	"os"
-)
+import "image"
 
 // withLimits returns a RendererFactory that decorates `inner` with the
-// hardening checks specified by `limits`. Each opened Renderer is
-// wrapped in a limitedRenderer that clamps RenderPage's dpi parameter
-// before forwarding the call. NewWithConfig calls this automatically;
-// hosts wiring up a custom factory get the same protections.
+// path-agnostic resource caps (currently MaxRenderDPI). Custom
+// factories opting out of DPI clamping can set Limits.MaxRenderDPI to
+// -1; the file-size cap is not enforced by this wrapper, so factories
+// using virtual paths work unmodified.
 func withLimits(inner RendererFactory, limits Limits) RendererFactory {
 	if inner == nil {
 		return nil
 	}
 	return func(path string) (Renderer, error) {
-		if limits.MaxFileBytes > 0 {
-			info, err := os.Stat(path)
-			if err != nil {
-				return nil, err
-			}
-			if info.Size() > limits.MaxFileBytes {
-				return nil, fmt.Errorf(
-					"PDF %q is %d bytes, exceeds MaxFileBytes=%d",
-					path, info.Size(), limits.MaxFileBytes,
-				)
-			}
-		}
 		r, err := inner(path)
 		if err != nil {
 			return nil, err

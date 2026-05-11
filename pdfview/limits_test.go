@@ -26,8 +26,8 @@ func TestSanitizeForTerminalDropsControlsAndBidi(t *testing.T) {
 		"":                             "",                                // empty
 	}
 	for in, want := range cases {
-		if got := sanitizeForTerminal(in); got != want {
-			t.Errorf("sanitizeForTerminal(%q) = %q, want %q", in, got, want)
+		if got := SanitizeForTerminal(in); got != want {
+			t.Errorf("SanitizeForTerminal(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -122,26 +122,23 @@ func TestWithLimitsClampsDPI(t *testing.T) {
 	}
 }
 
-func TestWithLimitsRejectsOversizeFile(t *testing.T) {
-	// Make a file larger than the cap and verify the factory refuses.
-	tmp, err := os.CreateTemp(t.TempDir(), "big-*.pdf")
+func TestWithLimitsDoesNotStatPath(t *testing.T) {
+	// Regression: withLimits used to call os.Stat(path), breaking
+	// custom factories that pass virtual identifiers (URLs, IDs, blob
+	// handles). The wrapper now only clamps DPI; MaxFileBytes is
+	// enforced by the default-filesystem renderer.
+	inner := func(path string) (Renderer, error) {
+		if path != "id://abc-123" {
+			t.Errorf("inner factory received unexpected path %q", path)
+		}
+		return &dpiCapturingRenderer{}, nil
+	}
+	wrapped := withLimits(inner, Limits{MaxFileBytes: 1, MaxRenderDPI: 150})
+	r, err := wrapped("id://abc-123")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("factory: %v", err)
 	}
-	tmp.Close()
-	if err := os.WriteFile(tmp.Name(), make([]byte, 4096), 0644); err != nil {
-		t.Fatal(err)
-	}
-	inner := func(string) (Renderer, error) { return &dpiCapturingRenderer{}, nil }
-	wrapped := withLimits(inner, Limits{MaxFileBytes: 1024})
-	r, err := wrapped(tmp.Name())
-	if err == nil {
-		_ = r.Close()
-		t.Fatal("expected error from oversize file, got nil")
-	}
-	if !strings.Contains(err.Error(), "MaxFileBytes") {
-		t.Errorf("error %q lacks MaxFileBytes context", err)
-	}
+	_ = r.Close()
 }
 
 func TestExtractPageRecoversFromPanic(t *testing.T) {

@@ -327,6 +327,34 @@ func TestRendererErrSurfaces(t *testing.T) {
 	}
 }
 
+func TestUpdateDispatchesKeyMapBindings(t *testing.T) {
+	// Verify the widget's Update consumes tea.KeyMsg via KeyMap, calling
+	// the corresponding action method. Pre-load a 2-page document so
+	// NextPage produces a visible page change.
+	m := NewWithConfig(Config{Cols: 80, Rows: 24})
+	gen := bump(m.loadGen)
+	m, _ = m.Update(pdfLoadedMsg{
+		path: "/tmp/x.pdf", pages: make([]pdfPage, 2), gen: gen,
+	})
+	if m.Page() != 1 {
+		t.Fatalf("preconditions: Page() = %d, want 1", m.Page())
+	}
+
+	// "n" is bound to KeyMap.Next; should advance to page 2.
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	if m.Page() != 2 {
+		t.Errorf("after 'n' KeyMsg: Page() = %d, want 2", m.Page())
+	}
+	// "m" toggles mode.
+	if mode := m.Mode(); mode != TextMode {
+		t.Fatalf("preconditions: Mode() = %v, want TextMode", mode)
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if m.Mode() != ImageMode {
+		t.Errorf("after 'm' KeyMsg: Mode() = %v, want ImageMode", m.Mode())
+	}
+}
+
 func TestLayoutRunsPacksAdjacentGlyphs(t *testing.T) {
 	// Simulate ledongthuc/pdf's per-glyph output: each letter of "Hello"
 	// is its own run, contiguous in PDF space (X gap < FontSize*0.2 each).

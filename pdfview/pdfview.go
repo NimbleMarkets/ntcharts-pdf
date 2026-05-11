@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"image"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"github.com/NimbleMarkets/ntcharts/v2/picture"
 )
@@ -37,7 +38,7 @@ type Model struct {
 	cols, rows int
 
 	path string
-	page int // 1-indexed; 0 means "no document loaded"
+	page int // 1-indexed; defaults to Config.InitialPage before any load
 	mode Mode
 
 	// docPages holds the per-page positioned-text + image-count caches.
@@ -146,7 +147,9 @@ func (m Model) Mode() Mode { return m.mode }
 // RenderMode returns the underlying picture protocol used by ImageMode.
 func (m Model) RenderMode() RenderMode { return m.pic.Mode() }
 
-// Page returns the current 1-indexed page number (0 if no document loaded).
+// Page returns the current 1-indexed page number. Before any document
+// is loaded the value is Config.InitialPage (defaulting to 1) — there
+// is no "0 = no document" sentinel; check NumPages() instead.
 func (m Model) Page() int { return m.page }
 
 // NumPages returns the page count of the loaded document, or 0.
@@ -395,12 +398,24 @@ func bump(p *uint64) uint64 {
 	return *p
 }
 
-// Update routes messages through the picture.Model and consumes the
-// widget's own async load/render notifications.
+// Update routes messages through the picture.Model, consumes the
+// widget's own async load/render notifications, and dispatches the
+// configured KeyMap bindings.
+//
+// Key dispatch is intentionally non-modal: each binding maps to one
+// action method. Pan bindings no-op at zoom 0 (nothing to pan into);
+// hosts that want "arrow at zoom 0 = page nav" can pre-handle arrow
+// keys in their own Update before forwarding to ours, or override
+// KeyMap.Next/Prev to include the arrow keys.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if cmd := m.dispatchKey(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+
 	case pdfLoadedMsg:
 		if msg.gen != *m.loadGen {
 			// Stale load: a newer SetPDF superseded it. Close the Renderer
@@ -458,6 +473,43 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// dispatchKey resolves a tea.KeyMsg against m.keys and calls the
+// matching action method. Returns the Cmd from that method (possibly
+// nil); the caller batches it into Update's outgoing cmd slice. No-op
+// when no binding matches — non-bound keys are simply ignored,
+// leaving hosts free to handle them at a higher layer.
+func (m *Model) dispatchKey(msg tea.KeyMsg) tea.Cmd {
+	switch {
+	case key.Matches(msg, m.keys.Next):
+		return m.NextPage()
+	case key.Matches(msg, m.keys.Prev):
+		return m.PrevPage()
+	case key.Matches(msg, m.keys.ToggleMode):
+		return m.ToggleMode()
+	case key.Matches(msg, m.keys.ToggleRender):
+		return m.ToggleRenderMode()
+	case key.Matches(msg, m.keys.Reload):
+		return m.Reload()
+	case key.Matches(msg, m.keys.ZoomIn):
+		return m.ZoomIn()
+	case key.Matches(msg, m.keys.ZoomOut):
+		return m.ZoomOut()
+	case key.Matches(msg, m.keys.ResetView):
+		return m.ResetView()
+	case key.Matches(msg, m.keys.CycleFit):
+		return m.CycleFit()
+	case key.Matches(msg, m.keys.PanLeft):
+		return m.PanLeft()
+	case key.Matches(msg, m.keys.PanRight):
+		return m.PanRight()
+	case key.Matches(msg, m.keys.PanUp):
+		return m.PanUp()
+	case key.Matches(msg, m.keys.PanDown):
+		return m.PanDown()
+	}
+	return nil
+}
+
 // renderPageCmd returns a Cmd that dispatches a page render via the
 // currently-open Renderer. Returns nil when there is no Renderer (no
 // factory wired up, or the load Cmd hasn't completed yet) or no path
@@ -500,14 +552,14 @@ func (m Model) View() tea.View {
 	// the terminal: a hostile filename or PDF parse error can carry
 	// terminal control sequences or bidi format chars otherwise.
 	if m.err != nil && len(m.docPages) == 0 {
-		return tea.NewView(m.style.Error.Render(fmt.Sprintf("error: %s", sanitizeForTerminal(m.err.Error()))))
+		return tea.NewView(m.style.Error.Render(fmt.Sprintf("error: %s", SanitizeForTerminal(m.err.Error()))))
 	}
 	if m.path == "" {
 		return tea.NewView(m.style.Status.Render("No document loaded"))
 	}
 	if len(m.docPages) == 0 {
 		// Path set but pages not yet populated — async load in flight.
-		return tea.NewView(m.style.Status.Render(fmt.Sprintf("Loading %s…", sanitizeForTerminal(m.path))))
+		return tea.NewView(m.style.Status.Render(fmt.Sprintf("Loading %s…", SanitizeForTerminal(m.path))))
 	}
 	if m.mode == ImageMode && m.sourceImage != nil {
 		return m.pic.View()

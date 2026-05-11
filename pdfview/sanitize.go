@@ -10,7 +10,7 @@
 //   - Zero-width / invisible chars that nudge readers' visual parsing
 //   - BOM, byte order marks, other non-printable Unicode
 //
-// sanitizeForTerminal removes all of the above and replaces line
+// SanitizeForTerminal removes all of the above and replaces line
 // breaks / tabs with single spaces so a multi-line malicious string
 // can't fan out across the status bar.
 
@@ -21,15 +21,19 @@ import (
 	"unicode"
 )
 
-// sanitizeForTerminal returns s with control, format, and non-printable
+// SanitizeForTerminal returns s with control, format, and non-printable
 // runes removed. Newlines and tabs become single spaces; trailing /
 // leading whitespace is preserved (callers can TrimSpace if they want).
 //
+// Exported so hosts can sanitize PDF-derived strings (notably the
+// result of Model.RendererErr().Error(), which can echo back PDF
+// metadata or filenames carrying control sequences) before placing
+// them in status bars or other terminal output.
+//
 // The function is conservative: anything not in Unicode's printable
-// category set (L, M, N, P, S, Zs) is dropped, plus an explicit deny
-// list of bidi format chars that overlap with category Cf but are
-// already excluded by !IsPrint — the redundancy documents intent.
-func sanitizeForTerminal(s string) string {
+// category set (L, M, N, P, S, Zs) is dropped — this catches Cc, Cf
+// (bidi/format), Co, Cs, Cn. Spaces (0x20) and emojis are preserved.
+func SanitizeForTerminal(s string) string {
 	if s == "" {
 		return ""
 	}
