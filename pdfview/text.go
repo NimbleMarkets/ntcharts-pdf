@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -321,7 +322,12 @@ func layoutRuns(runs []pdf.Text, mb mediaBox, cols, rows int) [][]rune {
 				if c >= cols {
 					break
 				}
-				if c >= 0 && r >= ' ' {
+				// Sanitize per-rune at placement time: any non-printable
+				// rune (control, format/bidi, surrogate, non-character)
+				// is silently skipped so a malicious PDF can't reposition
+				// the cursor or run Trojan-Source bidi tricks inside the
+				// grid.
+				if c >= 0 && unicode.IsPrint(r) {
 					grid[row][c] = r
 				}
 				c++

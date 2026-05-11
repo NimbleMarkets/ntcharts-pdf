@@ -495,15 +495,19 @@ func (m Model) View() tea.View {
 	// blank in older builds — and even with the NewWithConfig fix, an
 	// errored explicit SetPDF clears docPages and we want the error,
 	// not the empty-doc placeholder, to win).
+	//
+	// Sanitize externally-derived strings (path, err) before they reach
+	// the terminal: a hostile filename or PDF parse error can carry
+	// terminal control sequences or bidi format chars otherwise.
 	if m.err != nil && len(m.docPages) == 0 {
-		return tea.NewView(m.style.Error.Render(fmt.Sprintf("error: %v", m.err)))
+		return tea.NewView(m.style.Error.Render(fmt.Sprintf("error: %s", sanitizeForTerminal(m.err.Error()))))
 	}
 	if m.path == "" {
 		return tea.NewView(m.style.Status.Render("No document loaded"))
 	}
 	if len(m.docPages) == 0 {
 		// Path set but pages not yet populated — async load in flight.
-		return tea.NewView(m.style.Status.Render(fmt.Sprintf("Loading %s…", m.path)))
+		return tea.NewView(m.style.Status.Render(fmt.Sprintf("Loading %s…", sanitizeForTerminal(m.path))))
 	}
 	if m.mode == ImageMode && m.sourceImage != nil {
 		return m.pic.View()

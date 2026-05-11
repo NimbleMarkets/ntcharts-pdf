@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"unicode"
 
 	booba "github.com/NimbleMarkets/go-booba"
 	"charm.land/bubbles/v2/help"
@@ -26,6 +28,27 @@ import (
 	"github.com/NimbleMarkets/ntcharts/v2/picture"
 	"github.com/NimbleMarkets/ntcharts-pdf/pdfview"
 )
+
+// sanitizeStatus strips terminal-control / bidi format / non-printable
+// runes from a string before it reaches the status bar. Mirrors
+// pdfview's internal sanitizer; kept local to the example so it
+// doesn't expand the widget's public surface for what's a host
+// concern.
+func sanitizeStatus(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch r {
+		case '\n', '\r', '\t', '\v', '\f':
+			b.WriteByte(' ')
+			continue
+		}
+		if unicode.IsPrint(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
 
 var (
 	boxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
@@ -211,9 +234,11 @@ func (m model) View() tea.View {
 			// no factory configured (typical on js/wasm), or the factory
 			// errored. Surface the specific cause when we have one so
 			// the user understands why pressing 'm' produced no change.
+			// Sanitize the error text: factory errors can echo back
+			// hostile filenames or PDF-derived bytes.
 			label := "Image (no renderer)"
 			if err := m.pv.RendererErr(); err != nil {
-				label = fmt.Sprintf("Image (renderer error: %v)", err)
+				label = fmt.Sprintf("Image (renderer error: %s)", sanitizeStatus(err.Error()))
 			}
 			modeName = badgeWarnStyle.Render(label)
 		}

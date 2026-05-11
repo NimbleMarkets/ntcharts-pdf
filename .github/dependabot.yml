@@ -1,0 +1,16 @@
+# Dependabot config: keep GitHub Actions and Go modules up to date.
+# Actions are pinned by commit SHA (see .github/workflows/pages.yml);
+# Dependabot uses the trailing `# v<tag>` comment to recognise the
+# version and submit SHA-bumping PRs.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
