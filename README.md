@@ -6,8 +6,9 @@
     <a href="https://github.com/NimbleMarkets/ntcharts-pdf/blob/main/CODE_OF_CONDUCT.md"><img src="https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg"  alt="Code Of Conduct"></a>
 </p>
 
-
 `ntcharts-pdf` is a [Bubble Tea](https://github.com/charmbracelet/bubbletea) widget that renders PDF documents in the terminal. It pairs [`ledongthuc/pdf`](https://github.com/ledongthuc/pdf) for pure-Go text extraction with [`ntcharts/v2/picture`](https://github.com/NimbleMarkets/ntcharts) for image rendering — half-block glyphs anywhere, full-resolution Kitty graphics on terminals that support them (Kitty, Ghostty, WezTerm).  Browser-based image rendering uses [`@embedpdf/pdfium`](https://www.npmjs.com/package/@embedpdf/pdfium).
+
+[Try out the live WASM demo.](https://nimblemarkets.github.io/ntcharts-pdf)
 
 <p align="center"><img src="examples/pdfview/demo.gif" alt="pdfview demo" width="65%"/></p>
 
