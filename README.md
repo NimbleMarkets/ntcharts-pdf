@@ -89,7 +89,7 @@ type RendererFactory func(path string) (Renderer, error)
 The widget treats `Config.RendererFactory` as optional. When nil, `NewWithConfig` calls `DefaultRendererFactory()`:
 
 - **Native builds** return a `go-pdfium`-backed factory. The first call lazily initialises a wazero pool with the embedded `pdfium.wasm` blob (cold start ~hundreds of ms; warm calls are fast).
-- **`js/wasm` builds** always return nil — wazero needs host syscalls that the browser-WASM target doesn't supply.
+- **WASM targets (`GOARCH=wasm`, both browser-js and WASI)** always return nil — wazero needs host syscalls and threading that the WASM runtime doesn't supply.
 
 When the factory returns nil (or fails), ImageMode requests fall back to TextMode at View() time. Hosts that ship a server-side rasterizer can wire up their own `RendererFactory` and keep Image mode in WASM. Each loaded document gets its own `Renderer`; `pv.Close()` releases the document handle eagerly when a longer-lived host wants explicit cleanup.
 
@@ -125,7 +125,7 @@ Targets Bubble Tea **v2** (`charm.land/bubbletea/v2`). No v1 backport.
 ## Known caveats
 
 - **Binary size grows by ~5 MB** from the embedded `pdfium.wasm` blob. The first ImageMode toggle pays a wazero compile cost (hundreds of ms); subsequent renders are fast. Programs that never enter ImageMode skip the cost entirely (pool init is `sync.Once`-gated and deferred to the first factory call).
-- **Browser-WASM builds (`GOOS=js GOARCH=wasm`) have no built-in image renderer.** wazero itself needs host syscalls that the browser-WASM target doesn't provide, so `DefaultRendererFactory` returns nil there and ImageMode degrades to TextMode. Hosts that need image rendering in the browser can wire up a server-side rasterizer via `RendererFactory`.
+- **WASM builds (any `GOARCH=wasm` — browser-js or WASI) have no built-in image renderer.** wazero itself needs host syscalls and threading that the WASM runtime doesn't provide, so `DefaultRendererFactory` returns nil and ImageMode degrades to TextMode. Hosts that need image rendering can wire up a server-side rasterizer via `RendererFactory`; custom factories supplied in WASM environments are also responsible for their own resource caps (file size, request timeouts) since `Config.Limits.MaxFileBytes` is only enforced by the default local-filesystem renderer.
 - **PDFs are read fully into memory before rasterization.** `go-pdfium`'s `OpenDocument` takes a `[]byte`. For typical documents (single-digit MB) this is fine; multi-hundred-MB PDFs will use proportional RAM. Streaming open is possible via a custom RendererFactory.
 - **Per-page text extraction failures (including library panics) drop the page to an empty placeholder** rather than failing the whole load. A page that ledongthuc/pdf can't decode or that triggers a parser panic renders as a blank grid + image placeholder; ImageMode still rasterizes it correctly.
 - **Image placeholders count XObject entries with `/Subtype /Image`** in the page resources. Inline images (BI/EI operators inside the content stream) aren't counted — uncommon enough not to matter for most PDFs, easy to add later if you encounter a doc that uses them heavily.

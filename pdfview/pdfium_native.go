@@ -7,7 +7,7 @@
 // DefaultRendererFactory returns nil there (see pdfium_wasm.go), so
 // ImageMode degrades to TextMode in the browser without complaint.
 
-//go:build !js && !wasm
+//go:build !wasm
 
 package pdfview
 
