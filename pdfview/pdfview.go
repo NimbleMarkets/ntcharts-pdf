@@ -25,6 +25,7 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/NimbleMarkets/ntcharts/v2/picture"
 )
 
@@ -61,8 +62,8 @@ type Model struct {
 	// viewport's top-left corner inside the source image. Stored
 	// normalized (not in pixels) so the viewport survives a re-render
 	// at a different DPI / cell rect.
-	zoom         int
-	panX, panY   float64
+	zoom       int
+	panX, panY float64
 
 	// cur is the Renderer for the currently-loaded PDF, opened via
 	// cfg.RendererFactory in the SetPDF load Cmd. nil while no document is
@@ -110,6 +111,12 @@ func NewWithConfig(cfg Config) Model {
 	if cfg.RendererFactory != nil {
 		cfg.RendererFactory = withLimits(cfg.RendererFactory, cfg.Limits)
 	}
+	// Detach InitialData from the caller's slice immediately. Init runs
+	// asynchronously (later in the Bubble Tea program loop) and the
+	// public ownership contract promises callers can mutate the buffer
+	// the moment NewWithConfig returns. Doing the copy here guarantees
+	// that; the copyBytes call inside Init becomes belt-and-suspenders.
+	cfg.InitialData = copyBytes(cfg.InitialData)
 	styles := DefaultStyles()
 	if cfg.Styles != nil {
 		styles = *cfg.Styles
@@ -117,20 +124,20 @@ func NewWithConfig(cfg Config) Model {
 
 	var lg, rg uint64
 	m := Model{
-		cfg:       cfg,
-		keys:      DefaultKeyMap(),
-		style:     styles,
-		pic:       picture.NewWithConfig(cfg.PictureConfig),
-		cols:      cfg.Cols,
-		rows:      cfg.Rows,
-		mode:      cfg.DefaultMode,
-		page:      cfg.InitialPage,
+		cfg:   cfg,
+		keys:  DefaultKeyMap(),
+		style: styles,
+		pic:   picture.NewWithConfig(cfg.PictureConfig),
+		cols:  cfg.Cols,
+		rows:  cfg.Rows,
+		mode:  cfg.DefaultMode,
+		page:  cfg.InitialPage,
 		// path is the in-flight display label. Seed it from whichever
 		// initial source will actually be loaded so View() can show
 		// "Loading <name>…" or surface an error while the async load
 		// is in flight — without this, a failed initial load hides
 		// behind "No document loaded".
-		path: initialPathLabel(cfg),
+		path:      initialPathLabel(cfg),
 		loadGen:   &lg,
 		renderGen: &rg,
 	}
@@ -631,18 +638,56 @@ func (m Model) View() tea.View {
 	// the terminal: a hostile filename or PDF parse error can carry
 	// terminal control sequences or bidi format chars otherwise.
 	if m.err != nil && len(m.docPages) == 0 {
-		return tea.NewView(m.style.Error.Render(fmt.Sprintf("error: %s", SanitizeForTerminal(m.err.Error()))))
+		return tea.NewView(m.placeholderView(m.style.Error,
+			fmt.Sprintf("error: %s", SanitizeForTerminal(m.err.Error()))))
 	}
 	if m.path == "" {
-		return tea.NewView(m.style.Status.Render("No document loaded"))
+		return tea.NewView(m.placeholderView(m.style.Status, "No document loaded"))
 	}
 	if len(m.docPages) == 0 {
 		// Path set but pages not yet populated — async load in flight.
-		return tea.NewView(m.style.Status.Render(fmt.Sprintf("Loading %s…", SanitizeForTerminal(m.path))))
+		return tea.NewView(m.placeholderView(m.style.Status,
+			fmt.Sprintf("Loading %s…", SanitizeForTerminal(m.path))))
 	}
 	if m.mode == ImageMode && m.sourceImage != nil {
-		return m.pic.View()
+		// picture.View()'s content is only as tall as the rendered image
+		// needs — Kitty mode emits the placement as a short escape +
+		// trailing blank lines that may not reach m.rows, and FitContain
+		// can letterbox without padding the vertical axis. Pinning the
+		// returned content to (cols × rows) via lipgloss.Place keeps the
+		// host's surrounding border at a stable size across mode and
+		// fit-mode transitions; the existing image content is preserved
+		// (Place doesn't truncate when target dims meet the content's
+		// natural size).
+		pv := m.pic.View()
+		if m.cols > 0 && m.rows > 0 {
+			pv.Content = lipgloss.Place(m.cols, m.rows, lipgloss.Left, lipgloss.Top, pv.Content)
+		}
+		return pv
 	}
-	// Either TextMode, or ImageMode with no rasterized image yet.
-	return tea.NewView(m.renderTextPage())
+	// Either TextMode, or ImageMode with no rasterized image yet. Size
+	// the rendered text to the same (cols × rows) envelope so a
+	// TextMode-while-rasterize-pending frame doesn't collapse the host
+	// box between toggle and pageRenderedMsg.
+	content := m.renderTextPage()
+	if m.cols > 0 && m.rows > 0 {
+		content = lipgloss.Place(m.cols, m.rows, lipgloss.Left, lipgloss.Top, content)
+	}
+	return tea.NewView(content)
+}
+
+// placeholderView renders a single-line message centered inside the
+// widget's cell rectangle, so the host's surrounding border stays at
+// its allotted size while a load is in flight or before any document
+// has been supplied. Falls back to the bare styled text when SetSize
+// hasn't been called yet (m.cols / m.rows still zero).
+func (m Model) placeholderView(base lipgloss.Style, text string) string {
+	if m.cols <= 0 || m.rows <= 0 {
+		return base.Render(text)
+	}
+	return base.
+		Width(m.cols).
+		Height(m.rows).
+		Align(lipgloss.Center, lipgloss.Center).
+		Render(text)
 }

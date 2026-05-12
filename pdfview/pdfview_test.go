@@ -4,6 +4,7 @@ import (
 	"errors"
 	"image"
 	"image/color"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -432,6 +433,82 @@ func drainBatchUntilLoad(t *testing.T, cmd tea.Cmd) pdfErrMsg {
 	}
 	t.Fatalf("no pdfErrMsg in batch")
 	return pdfErrMsg{}
+}
+
+// dataCapturingFactory records the exact bytes it was asked to open.
+type dataCapturingFactoryState struct{ seen []byte }
+
+func dataCapturingFactory(s *dataCapturingFactoryState) RendererFactory {
+	return func(_ string, data []byte) (Renderer, error) {
+		s.seen = append([]byte(nil), data...) // copy so we observe the load-time state, not later mutations
+		return &fakeRenderer{}, nil
+	}
+}
+
+func TestInitialDataCopiedAtConstruction(t *testing.T) {
+	// Regression: the ownership contract promises that callers may
+	// mutate / pool their buffer the moment NewWithConfig returns.
+	// The copy must happen inside NewWithConfig, not lazily at Init.
+	//
+	// Discriminator: use a real, parseable PDF as InitialData. After
+	// construction, stomp the caller-side buffer's PDF header
+	// ("%PDF-1.4\n..."). When Init's async load runs:
+	//   - If construction copied (correct): parser reads the detached
+	//     copy with header intact → parse succeeds → factory observes
+	//     real bytes; state.seen[:5] == "%PDF-".
+	//   - If construction didn't copy (bug): parser reads the stomped
+	//     buffer → parse fails → factory never runs → state.seen is nil.
+	path := repoTestdata(t, "Example.pdf")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) < 10 {
+		t.Fatalf("Example.pdf too short: %d bytes", len(data))
+	}
+
+	state := &dataCapturingFactoryState{}
+	m := NewWithConfig(Config{
+		Cols: 80, Rows: 24,
+		RendererFactory: dataCapturingFactory(state),
+		InitialData:     data,
+		InitialName:     "captured.pdf",
+	})
+	// Stomp the PDF header in the caller-side slice. If construction
+	// captured a reference instead of a copy, this corrupts the load.
+	for i := 0; i < 10; i++ {
+		data[i] = 0xff
+	}
+
+	_ = drainBatchAny(t, m.Init())
+
+	if state.seen == nil {
+		t.Fatal("factory never ran — parse failed on stomped header, " +
+			"proving NewWithConfig did not copy InitialData")
+	}
+	if got := string(state.seen[:5]); got != "%PDF-" {
+		t.Errorf("factory saw header %q, want %q — copy at construction missing", got, "%PDF-")
+	}
+}
+
+// drainBatchAny executes a Bubble Tea Cmd (possibly a Batch) and
+// returns immediately when any leaf Cmd produces a Msg. Used to drive
+// Init synchronously in tests.
+func drainBatchAny(t *testing.T, cmd tea.Cmd) tea.Msg {
+	t.Helper()
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, child := range batch {
+			if child != nil {
+				_ = child()
+			}
+		}
+		return msg
+	}
+	return msg
 }
 
 func TestInitialDataSeedsPathFromName(t *testing.T) {

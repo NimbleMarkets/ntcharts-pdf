@@ -310,11 +310,11 @@ func layoutRuns(runs []pdf.Text, mb mediaBox, cols, rows int) [][]rune {
 	}
 
 	type placedRun struct {
-		col     int
-		endX    float64 // PDF-space right edge: X + W
-		startX  float64 // PDF-space left edge: X
-		emSize  float64 // font size in points, drives the "is this a word break" threshold
-		text    string
+		col    int
+		endX   float64 // PDF-space right edge: X + W
+		startX float64 // PDF-space left edge: X
+		emSize float64 // font size in points, drives the "is this a word break" threshold
+		text   string
 	}
 
 	// Bucket by projected row. Within a bucket the order is whatever

@@ -13,17 +13,17 @@ import (
 func TestSanitizeForTerminalDropsControlsAndBidi(t *testing.T) {
 	// Mix of dangerous runes that have spoofed terminals in the wild.
 	cases := map[string]string{
-		"plain":                        "plain",
-		"with\x1b[31m ANSI":            "with[31m ANSI",                  // ESC stripped, brackets kept
-		"DEL\x7Fchar":                  "DELchar",                        // 0x7F dropped
-		"C1sequence":             "C1sequence",                     // CSI in C1 dropped (properly UTF-8 encoded)
-		"bidi‮wolves":             "bidiwolves",                     // RLO dropped (Trojan Source)
-		"zero​width":              "zerowidth",                      // ZWSP dropped
-		"line\nbreak":                  "line break",                     // newline → space
-		"tab\there":                    "tab here",                       // tab → space
-		"‭‮both":             "both",                           // LRO + RLO dropped
-		"emoji✓ok":                     "emoji✓ok",                       // emojis are printable, kept
-		"":                             "",                                // empty
+		"plain":             "plain",
+		"with\x1b[31m ANSI": "with[31m ANSI", // ESC stripped, brackets kept
+		"DEL\x7Fchar":       "DELchar",       // 0x7F dropped
+		"C1\u009bsequence":  "C1sequence",    // CSI in C1 dropped (properly UTF-8 encoded)
+		"bidi\u202ewolves":  "bidiwolves",    // RLO dropped (Trojan Source)
+		"zero\u200bwidth":   "zerowidth",     // ZWSP dropped
+		"line\nbreak":       "line break",    // newline → space
+		"tab\there":         "tab here",      // tab → space
+		"\u202d\u202eboth":  "both",          // LRO + RLO dropped
+		"emoji✓ok":          "emoji✓ok",      // emojis are printable, kept
+		"":                  "",              // empty
 	}
 	for in, want := range cases {
 		if got := SanitizeForTerminal(in); got != want {
@@ -37,7 +37,7 @@ func TestLayoutRunsDropsControlsAndBidi(t *testing.T) {
 	// those runes in the grid — they'd reach the terminal raw and could
 	// reorder visual output.
 	mb := mediaBox{0, 0, 612, 792}
-	hostile := "abc‮\x1b[31m" // RLO + ESC + CSI
+	hostile := "abc\u202e\x1b[31m" // RLO + ESC + CSI
 	runs := []pdf.Text{{X: 50, Y: 700, W: 60, FontSize: 12, S: hostile}}
 	grid := layoutRuns(runs, mb, 80, 24)
 

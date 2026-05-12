@@ -157,4 +157,3 @@ func TestPageNavigationOnLoadedDoc(t *testing.T) {
 		t.Errorf("after PrevPage Page() = %d, want 2", m.Page())
 	}
 }
-

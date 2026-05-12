@@ -17,14 +17,14 @@ import (
 	"fmt"
 	"os"
 
-	booba "github.com/NimbleMarkets/go-booba"
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	booba "github.com/NimbleMarkets/go-booba"
 
-	"github.com/NimbleMarkets/ntcharts/v2/picture"
 	"github.com/NimbleMarkets/ntcharts-pdf/pdfview"
+	"github.com/NimbleMarkets/ntcharts/v2/picture"
 )
 
 // embeddedExample is the demo PDF compiled into the binary, used when
@@ -36,11 +36,11 @@ import (
 var embeddedExample []byte
 
 var (
-	boxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
-	footerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
-	errStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	badgeOkStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
-	badgeOffStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+	boxStyle       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
+	footerStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+	errStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	badgeOkStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+	badgeOffStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
 	badgeWarnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 )
 
