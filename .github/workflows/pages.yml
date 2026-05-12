@@ -31,17 +31,24 @@ jobs:
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: web/vendor/package-lock.json
       - name: Vendor @embedpdf/pdfium for the browser bridge
         # web/pdfium-bridge.js imports @embedpdf/pdfium through the
         # importmap declared in web/index.html, which resolves the
-        # specifier to ./vendor/embedpdf-pdfium/dist/index.js. web/vendor
-        # is gitignored, so CI has to install + stage the package on
-        # every build. Mirrors `task install-pdfium-bridge`.
+        # specifier to ./vendor/embedpdf-pdfium/dist/index.js. Only
+        # web/vendor/package.json + package-lock.json are tracked; the
+        # installed tree is regenerated here (mirrors local
+        # `task install-pdfium-bridge`). Version pinning lives in the
+        # lockfile; Dependabot drives bumps.
         run: |
-          mkdir -p web/vendor
-          (cd web/vendor && npm install --no-fund --no-audit @embedpdf/pdfium)
+          (cd web/vendor && npm ci --no-fund --no-audit)
           rm -rf web/vendor/embedpdf-pdfium
           cp -R web/vendor/node_modules/@embedpdf/pdfium web/vendor/embedpdf-pdfium
+          # Strip npm scratch so the Pages artifact only ships the
+          # bridge code the host page actually imports. Saves ~7 MB
+          # per deploy and avoids exposing the lockfile.
+          rm -rf web/vendor/node_modules web/vendor/package.json web/vendor/package-lock.json
       - name: Build WASM binary
         run: GOARCH=wasm GOOS=js go build -o web/app.wasm ./examples/pdfview/
       - name: Set up web assets
@@ -49,8 +56,6 @@ jobs:
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
-          # Exclude the npm install scratch — keep node_modules out of
-          # the Pages artifact; only embedpdf-pdfium/dist is referenced.
           path: web
 
   deploy:

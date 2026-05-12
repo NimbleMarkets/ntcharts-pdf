@@ -125,10 +125,14 @@ tasks:
       - task: install-pdfium-bridge
 
   install-pdfium-bridge:
-    desc: 'Vendor @embedpdf/pdfium under web/vendor/ for the WASM demo site'
+    desc: 'Vendor @embedpdf/pdfium under web/vendor/ from the tracked lockfile'
+    # Uses `npm ci` against the committed web/vendor/package.json +
+    # package-lock.json, so local installs and CI both resolve to the
+    # exact same version. Bump via Dependabot (npm ecosystem rule in
+    # .github/dependabot.yml) or `npm install @embedpdf/pdfium@<ver>`
+    # from web/vendor/ followed by committing the updated lockfile.
     cmds:
-      - mkdir -p web/vendor
-      - cd web/vendor && npm install @embedpdf/pdfium
+      - cd web/vendor && npm ci --no-fund --no-audit
       - test -f web/vendor/node_modules/@embedpdf/pdfium/dist/index.js
         || (echo "@embedpdf/pdfium dist not found — check the package's export layout and update web/index.html importmap" && exit 1)
       - rm -rf web/vendor/embedpdf-pdfium
