@@ -96,10 +96,10 @@ func (r *dpiCapturingRenderer) Close() error { return nil }
 func TestWithLimitsClampsDPI(t *testing.T) {
 	// Inner factory always succeeds — wrap it with a 150-DPI cap and
 	// verify a render request at 600 reaches the inner with 150.
-	inner := func(string) (Renderer, error) { return &dpiCapturingRenderer{}, nil }
+	inner := func(string, []byte) (Renderer, error) { return &dpiCapturingRenderer{}, nil }
 	wrapped := withLimits(inner, Limits{MaxRenderDPI: 150})
 
-	r, err := wrapped("ignored")
+	r, err := wrapped("ignored", nil)
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
@@ -127,14 +127,17 @@ func TestWithLimitsDoesNotStatPath(t *testing.T) {
 	// custom factories that pass virtual identifiers (URLs, IDs, blob
 	// handles). The wrapper now only clamps DPI; MaxFileBytes is
 	// enforced by the default-filesystem renderer.
-	inner := func(path string) (Renderer, error) {
-		if path != "id://abc-123" {
-			t.Errorf("inner factory received unexpected path %q", path)
+	inner := func(name string, data []byte) (Renderer, error) {
+		if name != "id://abc-123" {
+			t.Errorf("inner factory received unexpected name %q", name)
+		}
+		if len(data) != 4 || string(data) != "blob" {
+			t.Errorf("inner factory received unexpected data %q", data)
 		}
 		return &dpiCapturingRenderer{}, nil
 	}
 	wrapped := withLimits(inner, Limits{MaxFileBytes: 1, MaxRenderDPI: 150})
-	r, err := wrapped("id://abc-123")
+	r, err := wrapped("id://abc-123", []byte("blob"))
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}

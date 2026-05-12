@@ -4,8 +4,10 @@
 package pdfview
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"unicode"
@@ -52,62 +54,106 @@ type pdfErrMsg struct {
 	gen uint64
 }
 
-// loadPDFCmd opens the PDF, extracts positioned text runs and image
-// counts per page, and (when factory is non-nil) opens a Renderer bound
-// to the document.
-//
-// Per-page extraction is recover-wrapped because ledongthuc/pdf's
-// Content() and Resources() walks can panic on malformed streams.
-// A panicking page yields an empty pdfPage rather than crashing the
-// Cmd — partial extraction is more useful than total failure for the
-// average untrusted PDF, and downstream image-only handling already
-// covers the empty-runs case.
-//
-// limits.MaxPages caps the slice allocation up front; an attacker
-// claiming billions of pages can't OOM us before the first read.
-//
-// Renderer-open failures don't fail the whole load: text mode still
-// works without a renderer, so we record the error in the
-// pdfLoadedMsg's rendererErr field and leave renderer=nil.
-func loadPDFCmd(path string, gen uint64, factory RendererFactory, limits Limits) tea.Cmd {
+// loadPDFFromPathCmd reads the file at path (subject to MaxFileBytes)
+// and runs the bytes-based loader against the resulting in-memory copy.
+// Returns a Cmd suitable for the Bubble Tea program loop.
+func loadPDFFromPathCmd(path string, gen uint64, factory RendererFactory, limits Limits) tea.Cmd {
 	return func() tea.Msg {
-		f, r, err := pdf.Open(path)
+		if limits.MaxFileBytes > 0 {
+			info, err := os.Stat(path)
+			if err != nil {
+				return pdfErrMsg{err: fmt.Errorf("stat %q: %w", path, err), gen: gen}
+			}
+			if info.Size() > limits.MaxFileBytes {
+				return pdfErrMsg{
+					err: fmt.Errorf("PDF %q is %d bytes, exceeds MaxFileBytes=%d",
+						path, info.Size(), limits.MaxFileBytes),
+					gen: gen,
+				}
+			}
+		}
+		data, err := os.ReadFile(path)
 		if err != nil {
-			return pdfErrMsg{err: fmt.Errorf("open %q: %w", path, err), gen: gen}
+			return pdfErrMsg{err: fmt.Errorf("read %q: %w", path, err), gen: gen}
 		}
-		defer f.Close()
+		return runLoadFromBytes(path, data, gen, factory, limits)
+	}
+}
 
-		n := r.NumPage()
-		if n <= 0 {
-			return pdfErrMsg{err: errors.New("pdf reports zero pages"), gen: gen}
-		}
-		if limits.MaxPages > 0 && n > limits.MaxPages {
-			return pdfErrMsg{
-				err: fmt.Errorf("pdf reports %d pages, exceeds MaxPages=%d", n, limits.MaxPages),
+// loadPDFFromBytesCmd loads an in-memory PDF without touching the disk.
+// name is the display label carried into pdfLoadedMsg.path so the
+// status bar can identify the document.
+func loadPDFFromBytesCmd(name string, data []byte, gen uint64, factory RendererFactory, limits Limits) tea.Cmd {
+	return func() tea.Msg { return runLoadFromBytes(name, data, gen, factory, limits) }
+}
+
+// runLoadFromBytes is the shared body of both loaders. Parses the PDF
+// from bytes, runs per-page extraction (recover-wrapped — see
+// extractPage), and asks the factory for a Renderer.
+//
+// limits.MaxFileBytes is checked against len(data) here as well so the
+// SetPDFData path can't bypass it.
+// limits.MaxPages caps the pdfPage slice allocation; an attacker
+// claiming billions of pages can't OOM us before the first read.
+// Renderer-open failures don't fail the whole load — TextMode works
+// fine; only ImageMode degrades. The factory's error rides through
+// pdfLoadedMsg.rendererErr for hosts to surface.
+//
+// The named-return defer catches panics from anywhere in the parser
+// path (pdf.NewReader, NumPage, r.Page(i) — extractPage has its own
+// per-page recover, but pre-page calls are unguarded otherwise) and
+// turns them into pdfErrMsg so the load goroutine never crashes the
+// program.
+func runLoadFromBytes(name string, data []byte, gen uint64, factory RendererFactory, limits Limits) (msg tea.Msg) {
+	defer func() {
+		if r := recover(); r != nil {
+			msg = pdfErrMsg{
+				err: fmt.Errorf("panic loading %q: %v", name, r),
 				gen: gen,
 			}
 		}
-		pages := make([]pdfPage, n)
-		for i := 1; i <= n; i++ {
-			pages[i-1] = extractPage(r.Page(i), limits)
-		}
+	}()
 
-		var renderer Renderer
-		var rendererErr error
-		if factory != nil {
-			// Soft-fail: a factory error means ImageMode won't work, but
-			// TextMode loads fine. We capture the error so hosts can
-			// surface it (Model.RendererErr()) — earlier versions
-			// silently dropped it, leaving ImageMode quietly broken.
-			renderer, rendererErr = factory(path)
+	if limits.MaxFileBytes > 0 && int64(len(data)) > limits.MaxFileBytes {
+		return pdfErrMsg{
+			err: fmt.Errorf("PDF %q is %d bytes, exceeds MaxFileBytes=%d",
+				name, len(data), limits.MaxFileBytes),
+			gen: gen,
 		}
-		return pdfLoadedMsg{
-			path:        path,
-			pages:       pages,
-			renderer:    renderer,
-			rendererErr: rendererErr,
-			gen:         gen,
+	}
+	if len(data) == 0 {
+		return pdfErrMsg{err: errors.New("empty pdf data"), gen: gen}
+	}
+	r, err := pdf.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return pdfErrMsg{err: fmt.Errorf("parse %q: %w", name, err), gen: gen}
+	}
+	n := r.NumPage()
+	if n <= 0 {
+		return pdfErrMsg{err: errors.New("pdf reports zero pages"), gen: gen}
+	}
+	if limits.MaxPages > 0 && n > limits.MaxPages {
+		return pdfErrMsg{
+			err: fmt.Errorf("pdf reports %d pages, exceeds MaxPages=%d", n, limits.MaxPages),
+			gen: gen,
 		}
+	}
+	pages := make([]pdfPage, n)
+	for i := 1; i <= n; i++ {
+		pages[i-1] = extractPage(r.Page(i), limits)
+	}
+
+	var renderer Renderer
+	var rendererErr error
+	if factory != nil {
+		renderer, rendererErr = factory(name, data)
+	}
+	return pdfLoadedMsg{
+		path:        name,
+		pages:       pages,
+		renderer:    renderer,
+		rendererErr: rendererErr,
+		gen:         gen,
 	}
 }
 

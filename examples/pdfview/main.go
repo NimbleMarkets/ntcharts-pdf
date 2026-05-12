@@ -108,8 +108,7 @@ type model struct {
 	width, height int
 }
 
-func initialModel(path string) model {
-	cfg := pdfview.Config{InitialPath: path}
+func initialModel(cfg pdfview.Config) model {
 	return model{
 		pv:   pdfview.NewWithConfig(cfg),
 		help: help.New(),
@@ -239,13 +238,10 @@ func (m model) View() tea.View {
 }
 
 func main() {
-	path, cleanup, err := resolvePath()
+	cfg, err := initialConfig()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
-	}
-	if cleanup != nil {
-		defer cleanup()
 	}
 	// Resource cleanup is wired into the Update handler for `q` /
 	// `ctrl+c`, which calls pv.Close() synchronously before returning
@@ -253,32 +249,26 @@ func main() {
 	// Renderer interface holds a shared *pdfiumRenderer, so closing
 	// through the local copy still releases the real document handle
 	// and the wazero pool instance.
-	if err := booba.Run(initialModel(path)); err != nil {
+	if err := booba.Run(initialModel(cfg)); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// resolvePath picks the PDF path the example will load. argv[1] wins
-// when supplied; otherwise the embedded Example.pdf is written to a
-// temp file (both pdfium and ledongthuc/pdf need a filesystem path)
-// and a cleanup func is returned that deletes it at exit.
-func resolvePath() (path string, cleanup func(), err error) {
+// initialConfig assembles the pdfview.Config the example launches with.
+// argv[1] wins as a filesystem path; otherwise the embedded
+// Example.pdf bytes are passed in directly via Config.InitialData —
+// no temp file, no os.ReadFile, no filesystem entanglement.
+func initialConfig() (pdfview.Config, error) {
 	if len(os.Args) > 1 {
-		return os.Args[1], nil, nil
+		path := os.Args[1]
+		if _, err := os.Stat(path); err != nil {
+			return pdfview.Config{}, fmt.Errorf("argv[1] %q: %w", path, err)
+		}
+		return pdfview.Config{InitialPath: path}, nil
 	}
-	f, err := os.CreateTemp("", "pdfview-example-*.pdf")
-	if err != nil {
-		return "", nil, fmt.Errorf("temp file for embedded sample: %w", err)
-	}
-	if _, werr := f.Write(embeddedExample); werr != nil {
-		f.Close()
-		os.Remove(f.Name())
-		return "", nil, fmt.Errorf("write embedded sample: %w", werr)
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(f.Name())
-		return "", nil, fmt.Errorf("close embedded sample temp: %w", err)
-	}
-	return f.Name(), func() { _ = os.Remove(f.Name()) }, nil
+	return pdfview.Config{
+		InitialData: embeddedExample,
+		InitialName: "Example.pdf",
+	}, nil
 }

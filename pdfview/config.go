@@ -170,9 +170,26 @@ type Config struct {
 	// at runtime when the layout changes; these are the initial values.
 	Cols, Rows int
 
-	// InitialPath, if set, queues a load via the Cmd returned from Init().
-	// Equivalent to calling SetPDF(InitialPath) after construction.
+	// InitialPath, if set, queues a path-based load via the Cmd returned
+	// from Init(). Equivalent to calling SetPDF(InitialPath) after
+	// construction. Ignored when InitialData is also set — bytes win.
 	InitialPath string
+
+	// InitialData, when non-nil, queues an in-memory load via the Cmd
+	// returned from Init(). Equivalent to SetPDFData(InitialName,
+	// InitialData). nil = "not supplied"; an explicit empty slice
+	// routes to the bytes loader and surfaces "empty pdf data" through
+	// pdfErrMsg.
+	//
+	// The byte slice is copied at Init time, so callers may reuse or
+	// mutate the underlying buffer the moment NewWithConfig returns.
+	// Useful for `//go:embed`-ed fixtures and HTTP-fetched documents.
+	InitialData []byte
+
+	// InitialName is the display label used when InitialData is set
+	// (falls back to "embedded" when blank). Has no effect unless
+	// InitialData != nil.
+	InitialName string
 
 	// InitialPage is the 1-indexed first page shown. Defaults to 1 when 0.
 	InitialPage int

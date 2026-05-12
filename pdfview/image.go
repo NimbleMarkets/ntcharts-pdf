@@ -20,11 +20,16 @@ type Renderer interface {
 	Close() error
 }
 
-// RendererFactory opens a PDF at path and returns a Renderer bound to it.
-// The widget invokes the factory on every SetPDF call; nil is a valid
-// return when the platform has no renderer available (e.g. js/wasm),
-// which causes ImageMode to gracefully degrade to TextMode.
-type RendererFactory func(path string) (Renderer, error)
+// RendererFactory opens a PDF from raw bytes and returns a Renderer
+// bound to it. name is a human-readable label (typically the filename
+// or "embedded"), used for diagnostics; it is not parsed.
+//
+// The widget invokes the factory on every SetPDF / SetPDFData call.
+// For path-based loads the widget reads the file once and passes the
+// bytes here, so factories never have to do their own I/O. A nil
+// return value is valid when the platform has no renderer available
+// (e.g. js/wasm), causing ImageMode to degrade to TextMode.
+type RendererFactory func(name string, data []byte) (Renderer, error)
 
 // pageRenderedMsg is delivered when a Renderer.RenderPage call succeeds.
 // gen / loadGen are checked against the Model's current counters in

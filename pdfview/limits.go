@@ -20,8 +20,8 @@ func withLimits(inner RendererFactory, limits Limits) RendererFactory {
 	if inner == nil {
 		return nil
 	}
-	return func(path string) (Renderer, error) {
-		r, err := inner(path)
+	return func(name string, data []byte) (Renderer, error) {
+		r, err := inner(name, data)
 		if err != nil {
 			return nil, err
 		}

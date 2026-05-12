@@ -105,6 +105,40 @@ func TestImageOnlyPageRendersPlaceholder(t *testing.T) {
 	}
 }
 
+func TestSetPDFDataMatchesSetPDF(t *testing.T) {
+	// Round-trip the same PDF two ways — once via SetPDF(path), once
+	// via SetPDFData(name, bytes) — and assert both produce the same
+	// page count, the same text presence, and a working renderer.
+	path := repoTestdata(t, "Example.pdf")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mPath := New(80, 24)
+	mPath = drainLoad(t, mPath, mPath.SetPDF(path))
+
+	mData := New(80, 24)
+	mData = drainLoad(t, mData, mData.SetPDFData("Example.pdf", data))
+
+	if mPath.NumPages() != mData.NumPages() {
+		t.Errorf("NumPages mismatch: path=%d data=%d", mPath.NumPages(), mData.NumPages())
+	}
+	if got := mData.Page(); got != 1 {
+		t.Errorf("SetPDFData Page() = %d, want 1", got)
+	}
+	// Display name carries through: SetPDFData uses the supplied name
+	// as the View() "path" label.
+	if want, got := "Example.pdf", mData.path; got != want {
+		t.Errorf("SetPDFData path label = %q, want %q", got, want)
+	}
+	// Text content reaches View identically (page-1 CIELAB is at the
+	// same projected cell either way).
+	if !strings.Contains(mPath.View().Content, "CIELAB") || !strings.Contains(mData.View().Content, "CIELAB") {
+		t.Error("CIELAB missing from at least one View")
+	}
+}
+
 func TestPageNavigationOnLoadedDoc(t *testing.T) {
 	path := repoTestdata(t, "Example.pdf")
 	m := New(80, 24)

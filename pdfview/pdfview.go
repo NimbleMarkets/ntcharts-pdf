@@ -125,11 +125,12 @@ func NewWithConfig(cfg Config) Model {
 		rows:      cfg.Rows,
 		mode:      cfg.DefaultMode,
 		page:      cfg.InitialPage,
-		// path is set up-front when InitialPath is configured so View()
-		// can show a "Loading…" or error state while the async load
-		// kicks off in Init(). Without this, a failed initial load
-		// hides behind "No document loaded".
-		path:      cfg.InitialPath,
+		// path is the in-flight display label. Seed it from whichever
+		// initial source will actually be loaded so View() can show
+		// "Loading <name>…" or surface an error while the async load
+		// is in flight — without this, a failed initial load hides
+		// behind "No document loaded".
+		path: initialPathLabel(cfg),
 		loadGen:   &lg,
 		renderGen: &rg,
 	}
@@ -207,6 +208,52 @@ func (m *Model) SetSize(cols, rows int) tea.Cmd {
 	return cmd
 }
 
+// SetPDFData loads an in-memory PDF and resets the current page to
+// InitialPage. name is the display label shown in status bars; it is
+// not parsed. Useful for embedded fixtures (`//go:embed`), HTTP-
+// fetched documents, or any source where the caller already holds the
+// bytes — no temp-file dance required.
+//
+// The supplied data slice is copied before being handed to the async
+// load Cmd, so callers may safely reuse / mutate / pool the underlying
+// buffer the moment SetPDFData returns. The copy lives only as long as
+// the load Cmd's goroutine, then is released back to the garbage
+// collector.
+//
+// See SetPDF for the equivalent path-based loader.
+func (m *Model) SetPDFData(name string, data []byte) tea.Cmd {
+	if m.cur != nil {
+		_ = m.cur.Close()
+		m.cur = nil
+	}
+	m.path = name
+	m.page = m.cfg.InitialPage
+	m.docPages = nil
+	m.sourceImage = nil
+	m.rendererErr = nil
+	m.zoom, m.panX, m.panY = 0, 0, 0
+	m.err = nil
+	gen := bump(m.loadGen)
+	bump(m.renderGen)
+	// Defensive copy: the async load Cmd reads from `data` later, and
+	// pdf.NewReader holds a ReaderAt over the bytes for the lifetime
+	// of the load. Without the copy, a caller pooling buffers could
+	// see corruption / race with parsing.
+	return loadPDFFromBytesCmd(name, copyBytes(data), gen, m.cfg.RendererFactory, m.cfg.Limits)
+}
+
+// copyBytes is a small helper for the data-ownership defense at the
+// SetPDFData / Init boundaries. Returns nil for nil input so callers
+// can distinguish "no data supplied" from "empty data supplied".
+func copyBytes(b []byte) []byte {
+	if b == nil {
+		return nil
+	}
+	c := make([]byte, len(b))
+	copy(c, b)
+	return c
+}
+
 // SetPDF loads a PDF from disk and resets the current page to InitialPage.
 // Returns a Cmd that performs text extraction + renderer open off the UI
 // goroutine; on completion the widget's Update consumes a pdfLoadedMsg
@@ -232,7 +279,7 @@ func (m *Model) SetPDF(path string) tea.Cmd {
 	// this bump, a stale pageRenderedMsg whose page happens to match the
 	// new document's current page would be accepted as fresh.
 	bump(m.renderGen)
-	return loadPDFCmd(path, gen, m.cfg.RendererFactory, m.cfg.Limits)
+	return loadPDFFromPathCmd(path, gen, m.cfg.RendererFactory, m.cfg.Limits)
 }
 
 // SetPage jumps to the given 1-indexed page. Returns a render Cmd when
@@ -376,17 +423,49 @@ func (m *Model) ResetView() tea.Cmd {
 	return m.applyViewport()
 }
 
-// Init returns a Cmd that kicks off InitialPath loading (if set) plus the
-// picture model's own init (Kitty capability probe). The pdfLoadedMsg
-// delivered later populates m.path and the page cache via Update — no
+// Init returns a Cmd that kicks off the initial load (if either
+// Config.InitialData or Config.InitialPath is set) plus the picture
+// model's own init (Kitty capability probe). The pdfLoadedMsg
+// delivered later populates m.docPages and friends via Update — no
 // value-receiver mutation needed here.
+//
+// InitialData wins over InitialPath when present, including the
+// explicit empty-slice case (InitialData: []byte{} routes to the
+// bytes loader, which surfaces "empty pdf data" through pdfErrMsg).
+// nil = "not supplied"; non-nil = "use these bytes".
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.pic.Init()}
-	if m.cfg.InitialPath != "" {
+	switch {
+	case m.cfg.InitialData != nil:
 		gen := bump(m.loadGen)
-		cmds = append(cmds, loadPDFCmd(m.cfg.InitialPath, gen, m.cfg.RendererFactory, m.cfg.Limits))
+		name := initialName(m.cfg)
+		// Defensive copy at the boundary; see SetPDFData for rationale.
+		cmds = append(cmds, loadPDFFromBytesCmd(name, copyBytes(m.cfg.InitialData), gen, m.cfg.RendererFactory, m.cfg.Limits))
+	case m.cfg.InitialPath != "":
+		gen := bump(m.loadGen)
+		cmds = append(cmds, loadPDFFromPathCmd(m.cfg.InitialPath, gen, m.cfg.RendererFactory, m.cfg.Limits))
 	}
 	return tea.Batch(cmds...)
+}
+
+// initialName resolves the display label used for an in-memory initial
+// load. Falls back to "embedded" when the caller didn't supply one.
+func initialName(cfg Config) string {
+	if cfg.InitialName != "" {
+		return cfg.InitialName
+	}
+	return "embedded"
+}
+
+// initialPathLabel picks the display label seeded into m.path at
+// construction time. Mirrors Init's "InitialData wins" precedence so
+// the in-flight Loading message and any pre-load error match the
+// source that's actually being loaded.
+func initialPathLabel(cfg Config) string {
+	if cfg.InitialData != nil {
+		return initialName(cfg)
+	}
+	return cfg.InitialPath
 }
 
 // bump increments *p and returns the new value. Sole writer is the UI

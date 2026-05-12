@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"image"
 	"math"
-	"os"
 	"sync"
 	"time"
 
@@ -85,13 +84,20 @@ func DefaultRendererFactory() RendererFactory {
 }
 
 // DefaultRendererFactoryWithLimits is the same factory parameterised by
-// resource caps. The MaxRenderPixels cap is enforced inside the pdfium
-// renderer (it's the only layer that knows the page's physical
-// dimensions); MaxFileBytes / MaxRenderDPI are enforced by the
-// withLimits wrapper NewWithConfig applies over the top.
+// resource caps. MaxRenderPixels is enforced inside the pdfium renderer
+// (it's the only layer that knows the page's physical dimensions);
+// MaxRenderDPI is enforced by the withLimits wrapper NewWithConfig
+// applies over the top. MaxFileBytes is enforced upstream of the
+// factory — loadPDFCmd checks file size on disk via os.Stat for path
+// loads and checks len(data) for SetPDFData loads.
+//
+// The factory takes raw bytes because pdfium's OpenDocument is itself
+// bytes-based; routing file I/O through the widget instead of the
+// factory means custom factories never have to reimplement read,
+// MaxFileBytes enforcement, or temp-file games.
 func DefaultRendererFactoryWithLimits(limits Limits) RendererFactory {
 	limits.applyDefaults()
-	return func(path string) (Renderer, error) {
+	return func(name string, data []byte) (Renderer, error) {
 		pdfiumOnce.Do(func() {
 			pdfiumPool, pdfiumErr = webassembly.Init(pdfiumPoolConfig())
 		})
@@ -101,26 +107,8 @@ func DefaultRendererFactoryWithLimits(limits Limits) RendererFactory {
 		if pdfiumPool == nil {
 			return nil, errors.New("pdfium pool not initialised")
 		}
-
-		// MaxFileBytes is enforced here, in the local-filesystem renderer,
-		// rather than the universal factory wrapper — only filesystem
-		// paths support os.Stat. Custom factories using URLs / IDs /
-		// in-memory handles wouldn't benefit from a stat-based check.
-		if limits.MaxFileBytes > 0 {
-			info, err := os.Stat(path)
-			if err != nil {
-				return nil, fmt.Errorf("stat %q: %w", path, err)
-			}
-			if info.Size() > limits.MaxFileBytes {
-				return nil, fmt.Errorf(
-					"PDF %q is %d bytes, exceeds MaxFileBytes=%d",
-					path, info.Size(), limits.MaxFileBytes,
-				)
-			}
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read %q: %w", path, err)
+		if len(data) == 0 {
+			return nil, fmt.Errorf("pdfium OpenDocument %q: empty data", name)
 		}
 
 		inst, err := pdfiumPool.GetInstance(30 * time.Second)
@@ -130,7 +118,7 @@ func DefaultRendererFactoryWithLimits(limits Limits) RendererFactory {
 		doc, err := inst.OpenDocument(&requests.OpenDocument{File: &data})
 		if err != nil {
 			_ = inst.Close()
-			return nil, fmt.Errorf("pdfium OpenDocument: %w", err)
+			return nil, fmt.Errorf("pdfium OpenDocument %q: %w", name, err)
 		}
 		return &pdfiumRenderer{
 			instance:        inst,

@@ -83,8 +83,10 @@ type Renderer interface {
     Close() error
 }
 
-type RendererFactory func(path string) (Renderer, error)
+type RendererFactory func(name string, data []byte) (Renderer, error)
 ```
+
+The factory is **bytes-first**: the widget reads file contents once (subject to `Limits.MaxFileBytes`) and hands the bytes to the factory, so custom factories never have to implement their own file I/O. Hosts that already have the bytes in memory — an `//go:embed` blob, an HTTP response, a server-pushed buffer — can skip the path round-trip via `pv.SetPDFData(name, data)` or `Config.InitialData` / `InitialName`.
 
 The widget treats `Config.RendererFactory` as optional. When nil, `NewWithConfig` calls `DefaultRendererFactory()`:
 
@@ -92,6 +94,13 @@ The widget treats `Config.RendererFactory` as optional. When nil, `NewWithConfig
 - **WASM targets (`GOARCH=wasm`, both browser-js and WASI)** always return nil — wazero needs host syscalls and threading that the WASM runtime doesn't supply.
 
 When the factory returns nil (or fails), ImageMode requests fall back to TextMode at View() time. Hosts that ship a server-side rasterizer can wire up their own `RendererFactory` and keep Image mode in WASM. Each loaded document gets its own `Renderer`; `pv.Close()` releases the document handle eagerly when a longer-lived host wants explicit cleanup.
+
+### Loading APIs
+
+| Call | When to use |
+|---|---|
+| `pv.SetPDF(path)` / `Config.InitialPath` | PDF is on disk; widget reads it once (`Limits.MaxFileBytes` enforced via `os.Stat`) |
+| `pv.SetPDFData(name, data)` / `Config.InitialData` + `InitialName` | PDF bytes already in memory (embedded, fetched, pre-decompressed); `len(data)` checked against `MaxFileBytes` |
 
 `Config.RenderDPI` (default 300) sets the rasterization resolution; raise it for crisper Kitty output, lower it to trade fidelity for speed.
 
