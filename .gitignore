@@ -7,3 +7,6 @@ web/app.wasm
 web/wasm_exec.js
 web/booba/
 web/ghostty-web/
+# npm-installed @embedpdf/pdfium + transitive deps. Regenerated via
+# `task install-pdfium-bridge`.
+web/vendor/

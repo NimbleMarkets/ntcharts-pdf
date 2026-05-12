@@ -7,7 +7,7 @@
 </p>
 
 
-`ntcharts-pdf` is a [Bubble Tea](https://github.com/charmbracelet/bubbletea) widget that renders PDF documents in the terminal. It pairs [`ledongthuc/pdf`](https://github.com/ledongthuc/pdf) for pure-Go text extraction with [`ntcharts/v2/picture`](https://github.com/NimbleMarkets/ntcharts) for image rendering — half-block glyphs anywhere, full-resolution Kitty graphics on terminals that support them (Kitty, Ghostty, WezTerm).
+`ntcharts-pdf` is a [Bubble Tea](https://github.com/charmbracelet/bubbletea) widget that renders PDF documents in the terminal. It pairs [`ledongthuc/pdf`](https://github.com/ledongthuc/pdf) for pure-Go text extraction with [`ntcharts/v2/picture`](https://github.com/NimbleMarkets/ntcharts) for image rendering — half-block glyphs anywhere, full-resolution Kitty graphics on terminals that support them (Kitty, Ghostty, WezTerm).  Browser-based image rendering uses [`@embedpdf/pdfium`](https://www.npmjs.com/package/@embedpdf/pdfium).
 
 <p align="center"><img src="examples/pdfview/demo.gif" alt="pdfview demo" width="65%"/></p>
 
@@ -91,7 +91,8 @@ The factory is **bytes-first**: the widget reads file contents once (subject to 
 The widget treats `Config.RendererFactory` as optional. When nil, `NewWithConfig` calls `DefaultRendererFactory()`:
 
 - **Native builds** return a `go-pdfium`-backed factory. The first call lazily initialises a wazero pool with the embedded `pdfium.wasm` blob (cold start ~hundreds of ms; warm calls are fast).
-- **WASM targets (`GOARCH=wasm`, both browser-js and WASI)** always return nil — wazero needs host syscalls and threading that the WASM runtime doesn't supply.
+- **Browser-WASM (`GOOS=js GOARCH=wasm`)** bridges to the host page's [`@embedpdf/pdfium`](https://www.npmjs.com/package/@embedpdf/pdfium) instance via `syscall/js`. The host loads `web/pdfium-bridge.js` (which expects `@embedpdf/pdfium` to resolve through an import map), and that script populates `window.ntchartsPDFium` — Go's setupBridge() picks it up and uses the same PDFium engine that runs natively. See `web/index.html` for the full wiring.
+- **WASI (`GOOS=wasip1 GOARCH=wasm`)** returns nil. wazero can technically run interpreted inside WASI but the performance would be unusable for PDF rasterization.
 
 When the factory returns nil (or fails), ImageMode requests fall back to TextMode at View() time. Hosts that ship a server-side rasterizer can wire up their own `RendererFactory` and keep Image mode in WASM. Each loaded document gets its own `Renderer`; `pv.Close()` releases the document handle eagerly when a longer-lived host wants explicit cleanup.
 
@@ -130,7 +131,8 @@ PDF metadata, error messages, and host-supplied paths can carry C0/C1 control se
 ## Known caveats
 
 - **Binary size grows by ~5 MB** from the embedded `pdfium.wasm` blob. The first ImageMode toggle pays a wazero compile cost (hundreds of ms); subsequent renders are fast. Programs that never enter ImageMode skip the cost entirely (pool init is `sync.Once`-gated and deferred to the first factory call).
-- **WASM builds (any `GOARCH=wasm` — browser-js or WASI) have no built-in image renderer.** wazero itself needs host syscalls and threading that the WASM runtime doesn't provide, so `DefaultRendererFactory` returns nil and ImageMode degrades to TextMode. Hosts that need image rendering can wire up a server-side rasterizer via `RendererFactory`; custom factories supplied in WASM environments are also responsible for their own resource caps (file size, request timeouts) since `Config.Limits.MaxFileBytes` is only enforced by the default local-filesystem renderer.
+- **Browser-WASM ImageMode requires the host page to load `web/pdfium-bridge.js`.** This script expects `@embedpdf/pdfium` to be resolvable as an ES module (npm install + bundler, or a vendored copy reached via an `<script type="importmap">`). Without it, `setupBridge()` returns an error on the first ImageMode toggle and ImageMode degrades to TextMode — the rest of the widget keeps working.
+- **WASI builds have no built-in image renderer.** `DefaultRendererFactory` returns nil. Hosts that need rasterization there can wire up a server-side rasterizer via `RendererFactory`; custom factories supplied in WASM environments are also responsible for their own resource caps (file size, request timeouts) since `Config.Limits.MaxFileBytes` is only enforced by the default local-filesystem renderer.
 - **PDFs are read fully into memory before rasterization.** `go-pdfium`'s `OpenDocument` takes a `[]byte`. For typical documents (single-digit MB) this is fine; multi-hundred-MB PDFs will use proportional RAM. Streaming open is possible via a custom RendererFactory.
 - **Per-page text extraction failures (including library panics) drop the page to an empty placeholder** rather than failing the whole load. A page that ledongthuc/pdf can't decode or that triggers a parser panic renders as a blank grid + image placeholder; ImageMode still rasterizes it correctly.
 - **Image placeholders count XObject entries with `/Subtype /Image`** in the page resources. Inline images (BI/EI operators inside the content stream) aren't counted — uncommon enough not to matter for most PDFs, easy to add later if you encounter a doc that uses them heavily.
@@ -139,6 +141,10 @@ PDF metadata, error messages, and host-supplied paths can carry C0/C1 control se
 - **Vibe coded** This comment was inserted by a human.
 
 ## License
+
+The embedded [`Example.pdf`](./examples/pdfview/testdata/Example.pdf) is obtained from [WikiMedia Commons under AGPL](https://commons.wikimedia.org/wiki/File:Example.pdf#Licensing).
+
+Thanks to the [`ledongthuc/pdf`](https://github.com/ledongthuc/pdf) and [`embedpdf/embed-pdf-viewer`](https://github.com/embedpdf/embed-pdf-viewer) PDF libraries and their authors.
 
 [MIT License](./LICENSE.txt) — Copyright (c) 2026 [Neomantra Corp](https://www.neomantra.com).
 

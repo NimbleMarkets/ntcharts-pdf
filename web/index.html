@@ -10,14 +10,33 @@
         body { background: #1e1e1e; display: flex; }
         #terminal-container { flex: 1; min-height: 0; padding: 4px; overflow: hidden; }
     </style>
+    <!-- Import map: resolve @embedpdf/pdfium to a concrete URL. Adjust
+         to wherever your bundler / static-asset pipeline puts the
+         module. The example below assumes a sibling vendor copy. -->
+    <script type="importmap">
+    {
+        "imports": {
+            "@embedpdf/pdfium": "./vendor/embedpdf-pdfium/dist/index.js"
+        }
+    }
+    </script>
 </head>
 <body>
     <div id="terminal-container"></div>
     <script src="wasm_exec.js"></script>
     <script type="module">
         import { BoobaTerminal } from './booba/booba.js';
+        // Side-effect import: installs window.ntchartsPDFium and
+        // memoises the PDFium init() so the Go side's first
+        // setupBridge() call resolves quickly.
+        import './pdfium-bridge.js';
 
         async function main() {
+            // Kick off the PDFium init in parallel with the WASM
+            // download — by the time the user toggles ImageMode the
+            // PDFium runtime is already warm.
+            const pdfiumReady = window.ntchartsPDFium.init();
+
             // Load and start the Go WASM binary
             const go = new Go();
             const result = await WebAssembly.instantiateStreaming(
@@ -28,10 +47,13 @@
             // Initialize the terminal emulator
             const booba = new BoobaTerminal('terminal-container');
             await booba.init();
-
-            // Connect via WASM adapter (polls bubbletea_read at ~60fps)
             booba.connectWasm();
             booba.focus();
+
+            // Surface any PDFium init failure in the dev console; the
+            // Go side will also surface it through RendererErr() when
+            // the first factory call fires.
+            pdfiumReady.catch(err => console.error('PDFium init failed:', err));
         }
 
         main().catch(console.error);

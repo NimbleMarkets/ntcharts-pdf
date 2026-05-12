@@ -259,16 +259,24 @@ func main() {
 // argv[1] wins as a filesystem path; otherwise the embedded
 // Example.pdf bytes are passed in directly via Config.InitialData —
 // no temp file, no os.ReadFile, no filesystem entanglement.
+//
+// The browser build (GOOS=js GOARCH=wasm) ships with a fixed wasm heap
+// inside @embedpdf/pdfium; 300 DPI on a Letter page wants ~34 MB just
+// for the BGRA bitmap, which can push pdfium's auto-grown heap past
+// where it copes well. browserDefaultRenderDPI() returns a tighter
+// default for that path; native builds keep the package default (300).
 func initialConfig() (pdfview.Config, error) {
+	dpi := browserDefaultRenderDPI()
 	if len(os.Args) > 1 {
 		path := os.Args[1]
 		if _, err := os.Stat(path); err != nil {
 			return pdfview.Config{}, fmt.Errorf("argv[1] %q: %w", path, err)
 		}
-		return pdfview.Config{InitialPath: path}, nil
+		return pdfview.Config{InitialPath: path, RenderDPI: dpi}, nil
 	}
 	return pdfview.Config{
 		InitialData: embeddedExample,
 		InitialName: "Example.pdf",
+		RenderDPI:   dpi,
 	}, nil
 }

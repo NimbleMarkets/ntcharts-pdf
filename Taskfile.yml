@@ -86,6 +86,12 @@ tasks:
 
   build-wasm-site:
     desc: 'Build the WASM demo site into web/'
+    # Note: the host page (web/index.html) imports @embedpdf/pdfium
+    # via web/pdfium-bridge.js. That script expects the npm module
+    # to be resolvable through the importmap declared in index.html
+    # — either vendor it under web/vendor/embedpdf-pdfium/ (recommended:
+    # `npm install --prefix web/vendor @embedpdf/pdfium`) or rewrite the
+    # importmap to point at a CDN.
     deps: [go-tidy]
     cmds:
       - GOARCH=wasm GOOS=js go build -o web/app.wasm ./examples/pdfview/
@@ -111,3 +117,13 @@ tasks:
       - rm -rf web/_assets/booba web/_assets/ghostty-web
       - rm -f web/_assets/wasm_exec.js web/_assets/index.html
       - rm -f web/app.wasm
+
+  install-pdfium-bridge:
+    desc: 'Vendor @embedpdf/pdfium under web/vendor/ for the WASM demo site'
+    cmds:
+      - mkdir -p web/vendor
+      - cd web/vendor && npm install @embedpdf/pdfium
+      - test -f web/vendor/node_modules/@embedpdf/pdfium/dist/index.js
+        || (echo "@embedpdf/pdfium dist not found — check the package's export layout and update web/index.html importmap" && exit 1)
+      - rm -rf web/vendor/embedpdf-pdfium
+      - cp -R web/vendor/node_modules/@embedpdf/pdfium web/vendor/embedpdf-pdfium
