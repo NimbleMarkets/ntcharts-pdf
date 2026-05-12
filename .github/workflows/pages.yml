@@ -28,6 +28,20 @@ jobs:
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: '20'
+      - name: Vendor @embedpdf/pdfium for the browser bridge
+        # web/pdfium-bridge.js imports @embedpdf/pdfium through the
+        # importmap declared in web/index.html, which resolves the
+        # specifier to ./vendor/embedpdf-pdfium/dist/index.js. web/vendor
+        # is gitignored, so CI has to install + stage the package on
+        # every build. Mirrors `task install-pdfium-bridge`.
+        run: |
+          mkdir -p web/vendor
+          (cd web/vendor && npm install --no-fund --no-audit @embedpdf/pdfium)
+          rm -rf web/vendor/embedpdf-pdfium
+          cp -R web/vendor/node_modules/@embedpdf/pdfium web/vendor/embedpdf-pdfium
       - name: Build WASM binary
         run: GOARCH=wasm GOOS=js go build -o web/app.wasm ./examples/pdfview/
       - name: Set up web assets
@@ -35,6 +49,8 @@ jobs:
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
+          # Exclude the npm install scratch — keep node_modules out of
+          # the Pages artifact; only embedpdf-pdfium/dist is referenced.
           path: web
 
   deploy:

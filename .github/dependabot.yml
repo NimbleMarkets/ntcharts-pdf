@@ -14,3 +14,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+
+  # @embedpdf/pdfium is vendored under web/vendor/ at CI build time;
+  # this rule keeps the latest browser bridge version in sync.
+  - package-ecosystem: npm
+    directory: /web/vendor
+    schedule:
+      interval: weekly

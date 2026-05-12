@@ -181,9 +181,10 @@ type Config struct {
 	// routes to the bytes loader and surfaces "empty pdf data" through
 	// pdfErrMsg.
 	//
-	// The byte slice is copied at Init time, so callers may reuse or
-	// mutate the underlying buffer the moment NewWithConfig returns.
-	// Useful for `//go:embed`-ed fixtures and HTTP-fetched documents.
+	// The byte slice is copied inside NewWithConfig, so callers may
+	// reuse or mutate the underlying buffer the moment NewWithConfig
+	// returns. Useful for `//go:embed`-ed fixtures and HTTP-fetched
+	// documents.
 	InitialData []byte
 
 	// InitialName is the display label used when InitialData is set
@@ -197,11 +198,13 @@ type Config struct {
 	// DefaultMode selects the initial mode (TextMode if zero).
 	DefaultMode Mode
 
-	// RendererFactory opens a PDF at the given path and returns a Renderer
+	// RendererFactory opens a PDF from bytes and returns a Renderer
 	// bound to that document. When nil the constructor uses
-	// DefaultRendererFactory; platforms without a built-in renderer (js/wasm)
-	// transparently leave it nil and ImageMode falls back to TextMode at
-	// View() time.
+	// DefaultRendererFactory, which resolves per build target:
+	// go-pdfium (wazero) on native, the @embedpdf/pdfium JS bridge on
+	// GOOS=js GOARCH=wasm, nil on GOOS=wasip1 GOARCH=wasm. When the
+	// factory returns nil ImageMode falls back to TextMode at View()
+	// time.
 	RendererFactory RendererFactory
 
 	// RenderDPI controls the rasterization resolution passed to the

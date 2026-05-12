@@ -71,7 +71,7 @@ task build-ex-pdfview
 | Mode | What it does | Where it works |
 |---|---|---|
 | `pdfview.TextMode` (default) | Plain text via `ledongthuc/pdf`, styled with lipgloss; embedded images shown as boxed placeholders | Everywhere, including WASM |
-| `pdfview.ImageMode` | Rasterized page via a `Renderer` (default: `go-pdfium` running PDFium as WASM via wazero), fed to `ntcharts/v2/picture`. Supports zoom (`+`/`-` up to ×64) and pan (arrow keys when zoomed) | Native out of the box; WASM target needs a custom `RendererFactory` |
+| `pdfview.ImageMode` | Rasterized page via a `Renderer` (default: `go-pdfium`/wazero on native, the `@embedpdf/pdfium` JS bridge under `GOOS=js`), fed to `ntcharts/v2/picture`. Supports zoom (`+`/`-` up to ×64) and pan (arrow keys when zoomed) | Native + browser-WASM out of the box; WASI needs a custom `RendererFactory` |
 
 `pv.ToggleMode()` returns a `tea.Cmd` that swaps modes and re-renders. Image mode internally uses `picture.PictureGlyph` (universal half-blocks) or `picture.PictureKitty` (high-resolution); switch between them with `pv.ToggleRenderMode()`.
 

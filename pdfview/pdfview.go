@@ -9,9 +9,13 @@
 //     block glyphs otherwise.
 //
 // ImageMode is opt-in: callers either supply Config.RendererFactory or
-// rely on DefaultRendererFactory — go-pdfium (PDFium-via-wazero,
-// CGO-free) for native builds, nil for js/wasm (where wazero's host
-// syscalls aren't available).
+// rely on DefaultRendererFactory, which selects the right backend per
+// build target:
+//   - native (CGO-free) → go-pdfium via wazero, with the embedded
+//     pdfium.wasm blob
+//   - GOOS=js GOARCH=wasm → bridges via syscall/js into the host page's
+//     @embedpdf/pdfium instance (see web/pdfium-bridge.js)
+//   - GOOS=wasip1 GOARCH=wasm → nil (wazero-in-WASI is unusably slow)
 //
 // Mirrors the wrapping idioms of the sibling ntcharts-osm/mapview widget:
 // value-receiver Update returning (Model, tea.Cmd), View returning a
