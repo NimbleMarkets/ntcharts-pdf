@@ -13,9 +13,9 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	booba "github.com/NimbleMarkets/go-booba"
 	"charm.land/bubbles/v2/help"
@@ -26,6 +26,14 @@ import (
 	"github.com/NimbleMarkets/ntcharts/v2/picture"
 	"github.com/NimbleMarkets/ntcharts-pdf/pdfview"
 )
+
+// embeddedExample is the demo PDF compiled into the binary, used when
+// the user runs the example without a path argument. Sized small (~270KB)
+// so the binary stays reasonable. The same file is the canonical
+// fixture for pdfview's integration tests.
+//
+//go:embed testdata/Example.pdf
+var embeddedExample []byte
 
 var (
 	boxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
@@ -141,6 +149,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
+			// Close the renderer synchronously before we tell the
+			// program to quit. Bubble Tea hands Update a copy of the
+			// latest model, but the Renderer interface value inside
+			// m.pv.cur is a (pointer, type) tuple — the underlying
+			// *pdfiumRenderer is shared. Close acquires its mutex
+			// (waiting for any in-flight render) and releases the
+			// pdfium document handle + pool instance.
+			_ = m.pv.Close()
 			return m, tea.Quit
 		case "?":
 			m.help.ShowAll = !m.help.ShowAll
@@ -223,36 +239,46 @@ func (m model) View() tea.View {
 }
 
 func main() {
-	path := defaultPath()
-	if len(os.Args) > 1 {
-		path = os.Args[1]
-	}
-	if path == "" {
-		fmt.Fprintln(os.Stderr, "usage: pdfview <path-to.pdf>")
+	path, cleanup, err := resolvePath()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	// booba.Run doesn't return the final model, so this example doesn't
-	// call pv.Close() at exit — pdfium's pool and any open doc handles
-	// are reclaimed by the OS at process exit. Hosts that embed pdfview
-	// inside a longer-lived program should call pv.Close() on shutdown
-	// to release the document handle eagerly.
+	if cleanup != nil {
+		defer cleanup()
+	}
+	// Resource cleanup is wired into the Update handler for `q` /
+	// `ctrl+c`, which calls pv.Close() synchronously before returning
+	// tea.Quit. The Bubble Tea program model is value-passed, but the
+	// Renderer interface holds a shared *pdfiumRenderer, so closing
+	// through the local copy still releases the real document handle
+	// and the wazero pool instance.
 	if err := booba.Run(initialModel(path)); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// defaultPath finds a sample PDF to demo. Looks for the repo's bundled
-// testdata first, then sample.pdf next to the binary.
-func defaultPath() string {
-	for _, p := range []string{
-		"./testdata/Example.pdf",
-		"../../testdata/Example.pdf",
-		filepath.Join(filepath.Dir(os.Args[0]), "sample.pdf"),
-	} {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
+// resolvePath picks the PDF path the example will load. argv[1] wins
+// when supplied; otherwise the embedded Example.pdf is written to a
+// temp file (both pdfium and ledongthuc/pdf need a filesystem path)
+// and a cleanup func is returned that deletes it at exit.
+func resolvePath() (path string, cleanup func(), err error) {
+	if len(os.Args) > 1 {
+		return os.Args[1], nil, nil
 	}
-	return ""
+	f, err := os.CreateTemp("", "pdfview-example-*.pdf")
+	if err != nil {
+		return "", nil, fmt.Errorf("temp file for embedded sample: %w", err)
+	}
+	if _, werr := f.Write(embeddedExample); werr != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", nil, fmt.Errorf("write embedded sample: %w", werr)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return "", nil, fmt.Errorf("close embedded sample temp: %w", err)
+	}
+	return f.Name(), func() { _ = os.Remove(f.Name()) }, nil
 }

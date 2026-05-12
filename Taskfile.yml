@@ -60,6 +60,7 @@ tasks:
     sources:
       - pdfview/**/*.go
       - examples/pdfview/*.go
+      - examples/pdfview/testdata/Example.pdf
       - go.mod
     generates:
       - bin/ntcharts-pdfview

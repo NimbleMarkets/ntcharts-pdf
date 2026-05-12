@@ -118,10 +118,6 @@ Set any field to `-1` to disable that cap for trusted input; zero uses the defau
 
 PDF metadata, error messages, and host-supplied paths can carry C0/C1 control sequences and Unicode bidi format chars ("Trojan Source"-style attacks). The widget's own status text is already sanitized. For host-displayed strings derived from the PDF or its filename — e.g. `RendererErr().Error()` rendered into your status bar — use `pdfview.SanitizeForTerminal(s string) string`, which drops anything outside Unicode's printable categories and folds newlines / tabs to single spaces.
 
-## Bubble Tea version
-
-Targets Bubble Tea **v2** (`charm.land/bubbletea/v2`). No v1 backport.
-
 ## Known caveats
 
 - **Binary size grows by ~5 MB** from the embedded `pdfium.wasm` blob. The first ImageMode toggle pays a wazero compile cost (hundreds of ms); subsequent renders are fast. Programs that never enter ImageMode skip the cost entirely (pool init is `sync.Once`-gated and deferred to the first factory call).
@@ -131,6 +127,7 @@ Targets Bubble Tea **v2** (`charm.land/bubbletea/v2`). No v1 backport.
 - **Image placeholders count XObject entries with `/Subtype /Image`** in the page resources. Inline images (BI/EI operators inside the content stream) aren't counted — uncommon enough not to matter for most PDFs, easy to add later if you encounter a doc that uses them heavily.
 - **Kitty placement composition through lipgloss** is best-effort. `picture.Model.View()` embeds the Kitty placement escapes directly in the rendered string, which composes cleanly inside `lipgloss.JoinVertical` and basic borders but may misbehave under styles that rewrite the content (e.g. `Width` with truncation on a Kitty payload). Glyph mode has no such caveat.
 - **No page caching across flips.** Each Image-mode page-flip re-rasterizes via the renderer. A 300-DPI Letter-size page through pdfium runs in ~150–300ms on a recent Mac. Layer a renderer with its own cache if your flow does heavy back-and-forth.
+- **Vibe coded** This comment was inserted by a human.
 
 ## License
 
