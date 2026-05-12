@@ -164,6 +164,14 @@ func (m Model) RenderMode() RenderMode { return m.pic.Mode() }
 // is no "0 = no document" sentinel; check NumPages() instead.
 func (m Model) Page() int { return m.page }
 
+// Name returns the display label for the currently-loaded document.
+// For path-based loads it's whatever Path was supplied to SetPDF /
+// Config.InitialPath (full path); for in-memory loads it's the name
+// passed to SetPDFData / Config.InitialName (defaulting to "embedded").
+// Empty when no document has been loaded. Hosts that want a short
+// filename for status bars can apply filepath.Base() at the call site.
+func (m Model) Name() string { return m.path }
+
 // NumPages returns the page count of the loaded document, or 0.
 func (m Model) NumPages() int { return len(m.docPages) }
 

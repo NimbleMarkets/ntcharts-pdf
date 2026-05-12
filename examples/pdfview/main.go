@@ -16,6 +16,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -226,8 +227,14 @@ func (m model) View() tea.View {
 	case pdfview.FitCover:
 		fitName = "Cover"
 	}
-	status := fmt.Sprintf("page %d/%d%s  %s  %s  fit:%s  %s",
-		m.pv.Page(), m.pv.NumPages(), zoomTag, modeName, renderName, fitName, kittyBadge(m.pv.KittySupported()))
+	// filepath.Base trims directory components from argv paths while
+	// leaving in-memory display names (e.g. "Example.pdf" from the
+	// embedded fixture) unchanged. Sanitize before display: PDF paths
+	// can carry control / bidi format chars from the OS or the embed.
+	name := pdfview.SanitizeForTerminal(filepath.Base(m.pv.Name()))
+	status := fmt.Sprintf("%s  page %d/%d%s  %s  %s  fit:%s  %s",
+		name, m.pv.Page(), m.pv.NumPages(), zoomTag, modeName, renderName, fitName,
+		kittyBadge(m.pv.KittySupported()))
 	if err := m.pv.Err(); err != nil {
 		status = errStyle.Render(err.Error()) + "  " + status
 	}
