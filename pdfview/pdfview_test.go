@@ -466,6 +466,17 @@ func TestPageDimensionsNegativeIndex(t *testing.T) {
 	}
 }
 
+func TestSetPageImageBeforeLoadDoesNotPanic(t *testing.T) {
+	m := New(80, 24)
+	// No SetPDF — docPages is nil. SetPageImage must not panic
+	// even though m.page == 1 (the default InitialPage).
+	img := image.NewRGBA(image.Rect(0, 0, 10, 10))
+	_ = m.SetPageImage(1, img)
+	if w, h, ok := m.PageDimensions(1); ok || w != 0 || h != 0 {
+		t.Errorf("PageDimensions(1) after pre-load SetPageImage = (%d, %d, %v), want (0, 0, false)", w, h, ok)
+	}
+}
+
 func TestInitialDataCopiedAtConstruction(t *testing.T) {
 	// Regression: the ownership contract promises that callers may
 	// mutate / pool their buffer the moment NewWithConfig returns.

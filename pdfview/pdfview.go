@@ -176,8 +176,9 @@ func (m Model) Name() string { return m.path }
 func (m Model) NumPages() int { return len(m.docPages) }
 
 // PageDimensions returns the source pixel dimensions of the 1-indexed
-// page n as last rasterized. ok is false when n is out of range, no
-// document is loaded, or the page has not yet been rendered.
+// page n as last delivered by a Renderer or SetPageImage. ok is false
+// when n is out of range, no document is loaded, or the page has not
+// yet received a source image.
 func (m Model) PageDimensions(n int) (w, h int, ok bool) {
 	if n < 1 || n > len(m.docPages) {
 		return 0, 0, false
@@ -381,9 +382,13 @@ func (m *Model) SetPageImage(page int, img image.Image) tea.Cmd {
 		return nil
 	}
 	m.sourceImage = img
-	b := img.Bounds()
-	m.docPages[page-1].width = b.Dx()
-	m.docPages[page-1].height = b.Dy()
+	// Guard the docPages write: SetPageImage may be called before
+	// SetPDF, in which case docPages is nil and indexing panics.
+	if page <= len(m.docPages) {
+		b := img.Bounds()
+		m.docPages[page-1].width = b.Dx()
+		m.docPages[page-1].height = b.Dy()
+	}
 	return m.applyViewport()
 }
 

@@ -176,7 +176,6 @@ func TestPageDimensionsOutOfRangeAfterLoad(t *testing.T) {
 	m := New(80, 24)
 	m = drainLoad(t, m, m.SetPDF(path))
 
-	// Example.pdf has 3 pages; index 4 is out of range.
 	if w, h, ok := m.PageDimensions(m.NumPages() + 1); ok || w != 0 || h != 0 {
 		t.Errorf("PageDimensions(NumPages+1) = (%d, %d, %v), want (0, 0, false)", w, h, ok)
 	}
