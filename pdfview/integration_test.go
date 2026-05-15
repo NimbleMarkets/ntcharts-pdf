@@ -187,12 +187,6 @@ func TestPageDimensionsFromSetPageImage(t *testing.T) {
 	m := New(80, 24)
 	m = drainLoad(t, m, m.SetPDF(path))
 
-	// Switch to ImageMode so SetPageImage's downstream applyViewport doesn't
-	// no-op on the current code path; the dimensions write does not depend
-	// on mode, but matching how real consumers call this keeps the test
-	// faithful to the runtime contract.
-	_ = m.ToggleMode()
-
 	img := image.NewRGBA(image.Rect(0, 0, 400, 600))
 	_ = m.SetPageImage(1, img)
 
@@ -209,7 +203,6 @@ func TestPageDimensionsLatestWriteWins(t *testing.T) {
 	path := repoTestdata(t, "Example.pdf")
 	m := New(80, 24)
 	m = drainLoad(t, m, m.SetPDF(path))
-	_ = m.ToggleMode()
 
 	_ = m.SetPageImage(1, image.NewRGBA(image.Rect(0, 0, 400, 600)))
 	_ = m.SetPageImage(1, image.NewRGBA(image.Rect(0, 0, 800, 1200)))

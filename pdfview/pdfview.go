@@ -381,11 +381,9 @@ func (m *Model) SetPageImage(page int, img image.Image) tea.Cmd {
 		return nil
 	}
 	m.sourceImage = img
-	if page <= len(m.docPages) {
-		b := img.Bounds()
-		m.docPages[page-1].width = b.Dx()
-		m.docPages[page-1].height = b.Dy()
-	}
+	b := img.Bounds()
+	m.docPages[page-1].width = b.Dx()
+	m.docPages[page-1].height = b.Dy()
 	return m.applyViewport()
 }
 
@@ -568,11 +566,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			break // stale doc, stale render, or page changed under us
 		}
 		m.sourceImage = msg.img
-		if msg.page <= len(m.docPages) {
-			b := msg.img.Bounds()
-			m.docPages[msg.page-1].width = b.Dx()
-			m.docPages[msg.page-1].height = b.Dy()
-		}
+		b := msg.img.Bounds()
+		m.docPages[msg.page-1].width = b.Dx()
+		m.docPages[msg.page-1].height = b.Dy()
 		m.err = nil
 		if c := m.applyViewport(); c != nil {
 			cmds = append(cmds, c)
