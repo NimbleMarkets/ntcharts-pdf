@@ -41,6 +41,7 @@ tasks:
     desc: 'Clean built examples'
     cmds:
       - rm -f bin/ntcharts-pdfview
+      - rm -f bin/ntcharts-pagedims
       - rm -rf .task
 
 ###############################################################################
@@ -50,6 +51,7 @@ tasks:
     desc: 'Build all examples'
     deps:
       - build-ex-pdfview
+      - build-ex-pagedims
 
   build-ex-pdfview:
     desc: 'Build the pdfview example'
@@ -64,6 +66,19 @@ tasks:
       - go.mod
     generates:
       - bin/ntcharts-pdfview
+
+  build-ex-pagedims:
+    desc: 'Build the aspect-matched-cellrect example'
+    deps:
+      - go-tidy
+    cmds:
+      - go build -o bin/ntcharts-pagedims ./examples/pagedims
+    sources:
+      - pdfview/**/*.go
+      - examples/pagedims/*.go
+      - go.mod
+    generates:
+      - bin/ntcharts-pagedims
 
 ###############################################################################
 # Demo gif (note: Kitty graphics do not render in VHS — this captures the
