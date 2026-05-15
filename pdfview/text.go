@@ -32,6 +32,11 @@ type pdfPage struct {
 	runs       []pdf.Text
 	media      mediaBox
 	imageCount int
+	// width and height are the rasterized source pixel dimensions of
+	// this page as last delivered by a Renderer (pageRenderedMsg) or
+	// installed via SetPageImage. Zero values mean "not yet rendered".
+	width  int
+	height int
 }
 
 // pdfLoadedMsg is delivered when a SetPDF Cmd completes successfully.

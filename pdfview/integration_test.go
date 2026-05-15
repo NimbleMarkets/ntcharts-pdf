@@ -1,6 +1,7 @@
 package pdfview
 
 import (
+	"image"
 	"os"
 	"path/filepath"
 	"strings"
@@ -155,5 +156,66 @@ func TestPageNavigationOnLoadedDoc(t *testing.T) {
 	_ = m.PrevPage()
 	if m.Page() != 2 {
 		t.Errorf("after PrevPage Page() = %d, want 2", m.Page())
+	}
+}
+
+func TestPageDimensionsLoadedButNotRendered(t *testing.T) {
+	path := repoTestdata(t, "Example.pdf")
+	m := New(80, 24)
+	m = drainLoad(t, m, m.SetPDF(path))
+
+	for n := 1; n <= m.NumPages(); n++ {
+		if w, h, ok := m.PageDimensions(n); ok || w != 0 || h != 0 {
+			t.Errorf("PageDimensions(%d) before rasterization = (%d, %d, %v), want (0, 0, false)", n, w, h, ok)
+		}
+	}
+}
+
+func TestPageDimensionsOutOfRangeAfterLoad(t *testing.T) {
+	path := repoTestdata(t, "Example.pdf")
+	m := New(80, 24)
+	m = drainLoad(t, m, m.SetPDF(path))
+
+	// Example.pdf has 3 pages; index 4 is out of range.
+	if w, h, ok := m.PageDimensions(m.NumPages() + 1); ok || w != 0 || h != 0 {
+		t.Errorf("PageDimensions(NumPages+1) = (%d, %d, %v), want (0, 0, false)", w, h, ok)
+	}
+}
+
+func TestPageDimensionsFromSetPageImage(t *testing.T) {
+	path := repoTestdata(t, "Example.pdf")
+	m := New(80, 24)
+	m = drainLoad(t, m, m.SetPDF(path))
+
+	// Switch to ImageMode so SetPageImage's downstream applyViewport doesn't
+	// no-op on the current code path; the dimensions write does not depend
+	// on mode, but matching how real consumers call this keeps the test
+	// faithful to the runtime contract.
+	_ = m.ToggleMode()
+
+	img := image.NewRGBA(image.Rect(0, 0, 400, 600))
+	_ = m.SetPageImage(1, img)
+
+	w, h, ok := m.PageDimensions(1)
+	if !ok {
+		t.Fatalf("PageDimensions(1) after SetPageImage = ok=false, want true")
+	}
+	if w != 400 || h != 600 {
+		t.Errorf("PageDimensions(1) = (%d, %d), want (400, 600)", w, h)
+	}
+}
+
+func TestPageDimensionsLatestWriteWins(t *testing.T) {
+	path := repoTestdata(t, "Example.pdf")
+	m := New(80, 24)
+	m = drainLoad(t, m, m.SetPDF(path))
+	_ = m.ToggleMode()
+
+	_ = m.SetPageImage(1, image.NewRGBA(image.Rect(0, 0, 400, 600)))
+	_ = m.SetPageImage(1, image.NewRGBA(image.Rect(0, 0, 800, 1200)))
+
+	w, h, ok := m.PageDimensions(1)
+	if !ok || w != 800 || h != 1200 {
+		t.Errorf("PageDimensions(1) after second SetPageImage = (%d, %d, %v), want (800, 1200, true)", w, h, ok)
 	}
 }

@@ -175,6 +175,20 @@ func (m Model) Name() string { return m.path }
 // NumPages returns the page count of the loaded document, or 0.
 func (m Model) NumPages() int { return len(m.docPages) }
 
+// PageDimensions returns the source pixel dimensions of the 1-indexed
+// page n as last rasterized. ok is false when n is out of range, no
+// document is loaded, or the page has not yet been rendered.
+func (m Model) PageDimensions(n int) (w, h int, ok bool) {
+	if n < 1 || n > len(m.docPages) {
+		return 0, 0, false
+	}
+	p := m.docPages[n-1]
+	if p.width == 0 {
+		return 0, 0, false
+	}
+	return p.width, p.height, true
+}
+
 // Err returns the last load or render error, cleared on the next successful
 // operation. Hosts can surface this in their status bar.
 func (m Model) Err() error { return m.err }
@@ -367,6 +381,11 @@ func (m *Model) SetPageImage(page int, img image.Image) tea.Cmd {
 		return nil
 	}
 	m.sourceImage = img
+	if page <= len(m.docPages) {
+		b := img.Bounds()
+		m.docPages[page-1].width = b.Dx()
+		m.docPages[page-1].height = b.Dy()
+	}
 	return m.applyViewport()
 }
 
@@ -549,6 +568,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			break // stale doc, stale render, or page changed under us
 		}
 		m.sourceImage = msg.img
+		if msg.page <= len(m.docPages) {
+			b := msg.img.Bounds()
+			m.docPages[msg.page-1].width = b.Dx()
+			m.docPages[msg.page-1].height = b.Dy()
+		}
 		m.err = nil
 		if c := m.applyViewport(); c != nil {
 			cmds = append(cmds, c)

@@ -445,6 +445,27 @@ func dataCapturingFactory(s *dataCapturingFactoryState) RendererFactory {
 	}
 }
 
+func TestPageDimensionsNoDocument(t *testing.T) {
+	m := New(80, 24)
+	if w, h, ok := m.PageDimensions(1); ok || w != 0 || h != 0 {
+		t.Errorf("PageDimensions(1) on empty model = (%d, %d, %v), want (0, 0, false)", w, h, ok)
+	}
+}
+
+func TestPageDimensionsZeroIndex(t *testing.T) {
+	m := New(80, 24)
+	if w, h, ok := m.PageDimensions(0); ok || w != 0 || h != 0 {
+		t.Errorf("PageDimensions(0) = (%d, %d, %v), want (0, 0, false)", w, h, ok)
+	}
+}
+
+func TestPageDimensionsNegativeIndex(t *testing.T) {
+	m := New(80, 24)
+	if w, h, ok := m.PageDimensions(-3); ok || w != 0 || h != 0 {
+		t.Errorf("PageDimensions(-3) = (%d, %d, %v), want (0, 0, false)", w, h, ok)
+	}
+}
+
 func TestInitialDataCopiedAtConstruction(t *testing.T) {
 	// Regression: the ownership contract promises that callers may
 	// mutate / pool their buffer the moment NewWithConfig returns.
