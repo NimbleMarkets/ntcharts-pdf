@@ -188,7 +188,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() tea.View {
 	if m.width == 0 || m.height == 0 {
-		return tea.NewView("loading…")
+		v := tea.NewView("loading…")
+		v.AltScreen = true
+		return v
 	}
 	// picture.Model embeds Kitty placement escapes directly inside View().Content,
 	// so wrapping the content in a lipgloss border preserves them. Glyph mode
@@ -241,7 +243,9 @@ func (m model) View() tea.View {
 	footer := footerStyle.Width(m.width).Render(status)
 
 	out := lipgloss.JoinVertical(lipgloss.Left, body, footer, m.help.View(m.keys))
-	return tea.NewView(out)
+	v := tea.NewView(out)
+	v.AltScreen = true
+	return v
 }
 
 func main() {

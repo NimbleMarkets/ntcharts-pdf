@@ -99,7 +99,9 @@ func (m model) aspectCellrect() (cols, rows int) {
 
 func (m model) View() tea.View {
 	if m.width == 0 {
-		return tea.NewView("loading…")
+		v := tea.NewView("loading…")
+		v.AltScreen = true
+		return v
 	}
 	body := m.pv.View().Content
 	status := "page dims: pending (waiting for first render)"
@@ -108,7 +110,9 @@ func (m model) View() tea.View {
 			m.pv.Page(), m.pv.NumPages(), pageW, pageH, m.cols, m.rows)
 	}
 	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("242")).Width(m.width).Render(status)
-	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, body, footer))
+	v := tea.NewView(lipgloss.JoinVertical(lipgloss.Left, body, footer))
+	v.AltScreen = true
+	return v
 }
 
 func main() {
