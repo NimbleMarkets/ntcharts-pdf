@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"image"
 	"math"
+	"runtime"
 	"sync"
 	"time"
 
@@ -59,9 +60,10 @@ func pdfiumPoolConfig() webassembly.Config {
 // likely UB. Render durations (hundreds of ms in pdfium) are short
 // enough that blocking SetPDF on the in-flight call is acceptable.
 type pdfiumRenderer struct {
-	mu       sync.Mutex
-	instance pdfium.Pdfium
-	docRef   references.FPDF_DOCUMENT
+	mu            sync.Mutex
+	instance      pdfium.Pdfium
+	docRef        references.FPDF_DOCUMENT
+	cleanupHandle runtime.Cleanup
 
 	// maxRenderPixels caps the bitmap area of a single rasterized page.
 	// 0 = disabled. When the projected pixel count at the caller-supplied
@@ -120,12 +122,27 @@ func DefaultRendererFactoryWithLimits(limits Limits) RendererFactory {
 			_ = inst.Close()
 			return nil, fmt.Errorf("pdfium OpenDocument %q: %w", name, err)
 		}
-		return &pdfiumRenderer{
+		r := &pdfiumRenderer{
 			instance:        inst,
 			docRef:          doc.Document,
 			maxRenderPixels: limits.MaxRenderPixels,
-		}, nil
+		}
+		r.cleanupHandle = runtime.AddCleanup(r, cleanUpPdfium, pdfiumCleanupArgs{
+			instance: inst,
+			docRef:   doc.Document,
+		})
+		return r, nil
 	}
+}
+
+type pdfiumCleanupArgs struct {
+	instance pdfium.Pdfium
+	docRef   references.FPDF_DOCUMENT
+}
+
+func cleanUpPdfium(args pdfiumCleanupArgs) {
+	_, _ = args.instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: args.docRef})
+	_ = args.instance.Close()
 }
 
 // RenderPage rasterizes a 1-indexed page at the requested DPI. The
@@ -217,6 +234,7 @@ func (r *pdfiumRenderer) Close() error {
 	if r.instance == nil {
 		return nil
 	}
+	r.cleanupHandle.Stop()
 	_, _ = r.instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: r.docRef})
 	err := r.instance.Close()
 	r.instance = nil

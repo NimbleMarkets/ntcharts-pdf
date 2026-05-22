@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"image"
 	"math"
+	"runtime"
 	"sync"
 	"syscall/js"
 )
@@ -32,6 +33,7 @@ import (
 type jsRenderer struct {
 	mu              sync.Mutex
 	handleVal       js.Value
+	cleanupHandle   runtime.Cleanup
 	maxRenderPixels int
 	closed          bool
 }
@@ -69,11 +71,21 @@ func DefaultRendererFactoryWithLimits(limits Limits) RendererFactory {
 		if !handle.Truthy() {
 			return nil, fmt.Errorf("ntchartsPDFium.loadDocument %q: returned falsy handle", name)
 		}
-		return &jsRenderer{
+		r := &jsRenderer{
 			handleVal:       handle,
 			maxRenderPixels: limits.MaxRenderPixels,
-		}, nil
+		}
+		r.cleanupHandle = runtime.AddCleanup(r, cleanUpJSRenderer, jsCleanupArgs{handle: handle})
+		return r, nil
 	}
+}
+
+type jsCleanupArgs struct {
+	handle js.Value
+}
+
+func cleanUpJSRenderer(args jsCleanupArgs) {
+	bridgeAPI.Call("closeDocument", args.handle)
 }
 
 // RenderPage rasterizes a 1-indexed page via the bridge and returns
@@ -161,6 +173,7 @@ func (r *jsRenderer) Close() error {
 		return nil
 	}
 	r.closed = true
+	r.cleanupHandle.Stop()
 	bridgeAPI.Call("closeDocument", r.handleVal)
 	r.handleVal = js.Null()
 	return nil
