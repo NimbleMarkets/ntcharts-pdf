@@ -28,9 +28,14 @@ tasks:
       - go get -u ./...
 
   test:
-    desc: 'Run all Go tests'
+    desc: 'Run fast Go unit tests'
     cmds:
       - go test ./...
+
+  test-all:
+    desc: 'Run all Go tests including wazero integration'
+    cmds:
+      - go test -tags=integration ./...
 
   build:
     desc: 'Build all the things'
