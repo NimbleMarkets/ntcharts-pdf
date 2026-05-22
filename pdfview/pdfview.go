@@ -26,6 +26,7 @@ package pdfview
 import (
 	"fmt"
 	"image"
+	"sync"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -91,6 +92,8 @@ type Model struct {
 	loadGen   *uint64
 	renderGen *uint64
 
+	cache *pageCache
+
 	err error
 }
 
@@ -107,6 +110,9 @@ func NewWithConfig(cfg Config) Model {
 	}
 	if cfg.RenderDPI <= 0 {
 		cfg.RenderDPI = DefaultRenderDPI
+	}
+	if cfg.PageCacheSize == 0 {
+		cfg.PageCacheSize = 3
 	}
 	cfg.Limits.applyDefaults()
 	if cfg.RendererFactory == nil {
@@ -144,6 +150,7 @@ func NewWithConfig(cfg Config) Model {
 		path:      initialPathLabel(cfg),
 		loadGen:   &lg,
 		renderGen: &rg,
+		cache:     &pageCache{},
 	}
 	if c := m.pic.SetSize(cfg.Cols, cfg.Rows); c != nil {
 		// SetSize during construction can't deliver a Cmd; the renderer
@@ -217,6 +224,7 @@ func (m Model) RendererErr() error { return m.rendererErr }
 // they want a clean exit; leaking the renderer at process exit is fine
 // for short-lived TUIs.
 func (m *Model) Close() error {
+	m.clearCache()
 	if m.cur == nil {
 		return nil
 	}
@@ -549,6 +557,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.path = msg.path
 		m.docPages = msg.pages
 		m.cur = msg.renderer
+		m.clearCache()
 		m.rendererErr = msg.rendererErr
 		m.err = nil
 		if m.page > len(m.docPages) {
@@ -571,6 +580,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			break // stale doc, stale render, or page changed under us
 		}
 		m.sourceImage = msg.img
+		m.addToCache(msg.page, msg.dpi, msg.img)
 		b := msg.img.Bounds()
 		m.docPages[msg.page-1].width = b.Dx()
 		m.docPages[msg.page-1].height = b.Dy()
@@ -648,16 +658,26 @@ func (m *Model) renderPageCmd(page int) tea.Cmd {
 	if m.cur == nil || m.path == "" {
 		return nil
 	}
+	dpi := m.cfg.RenderDPI
+	if m.cfg.DynamicDPI {
+		dpi = m.calcDynamicDPI(page)
+	}
 	gen := bump(m.renderGen)
 	loadGen := *m.loadGen
+
+	if img := m.checkCache(page, dpi); img != nil {
+		return func() tea.Msg {
+			return pageRenderedMsg{page: page, img: img, dpi: dpi, gen: gen, loadGen: loadGen}
+		}
+	}
+
 	r := m.cur
-	dpi := m.cfg.RenderDPI
 	return func() tea.Msg {
 		img, err := r.RenderPage(page, dpi)
 		if err != nil {
 			return pageRenderErrMsg{err: err, page: page, gen: gen, loadGen: loadGen}
 		}
-		return pageRenderedMsg{page: page, img: img, gen: gen, loadGen: loadGen}
+		return pageRenderedMsg{page: page, img: img, dpi: dpi, gen: gen, loadGen: loadGen}
 	}
 }
 
@@ -727,4 +747,124 @@ func (m Model) placeholderView(base lipgloss.Style, text string) string {
 		Height(m.rows).
 		Align(lipgloss.Center, lipgloss.Center).
 		Render(text)
+}
+
+type cachedImage struct {
+	pageNum int
+	dpi     int
+	img     image.Image
+}
+
+type pageCache struct {
+	mu    sync.Mutex
+	items []cachedImage
+}
+
+func (m *Model) initCache() {
+	if m.cache == nil {
+		m.cache = &pageCache{}
+	}
+}
+
+func (m *Model) checkCache(page, dpi int) image.Image {
+	if m.cfg.PageCacheSize <= 0 {
+		return nil
+	}
+	m.initCache()
+	m.cache.mu.Lock()
+	defer m.cache.mu.Unlock()
+
+	for i, entry := range m.cache.items {
+		if entry.pageNum == page && entry.dpi == dpi {
+			// LRU update: move this entry to the end of the slice (most recently used)
+			m.cache.items = append(m.cache.items[:i], m.cache.items[i+1:]...)
+			m.cache.items = append(m.cache.items, entry)
+			return entry.img
+		}
+	}
+	return nil
+}
+
+func (m *Model) addToCache(page, dpi int, img image.Image) {
+	if m.cfg.PageCacheSize <= 0 {
+		return
+	}
+	m.initCache()
+	m.cache.mu.Lock()
+	defer m.cache.mu.Unlock()
+
+	// Check if already in cache
+	for i, entry := range m.cache.items {
+		if entry.pageNum == page && entry.dpi == dpi {
+			// Update image and move to end
+			m.cache.items = append(m.cache.items[:i], m.cache.items[i+1:]...)
+			m.cache.items = append(m.cache.items, cachedImage{pageNum: page, dpi: dpi, img: img})
+			return
+		}
+	}
+
+	// Evict oldest if full
+	if len(m.cache.items) >= m.cfg.PageCacheSize {
+		m.cache.items = m.cache.items[1:]
+	}
+	m.cache.items = append(m.cache.items, cachedImage{pageNum: page, dpi: dpi, img: img})
+}
+
+func (m *Model) clearCache() {
+	if m.cache != nil {
+		m.cache.mu.Lock()
+		m.cache.items = nil
+		m.cache.mu.Unlock()
+	}
+}
+
+func (m *Model) calcDynamicDPI(page int) int {
+	if page < 1 || page > len(m.docPages) {
+		return DefaultRenderDPI
+	}
+	p := m.docPages[page-1]
+	wPts := p.media.width()
+	hPts := p.media.height()
+	if wPts <= 0 || hPts <= 0 {
+		return DefaultRenderDPI
+	}
+
+	cellW := m.cfg.CellPixelWidth
+	if cellW <= 0 {
+		cellW = 8
+	}
+	cellH := m.cfg.CellPixelHeight
+	if cellH <= 0 {
+		cellH = 16
+	}
+
+	targetW := float64(m.cols * cellW)
+	targetH := float64(m.rows * cellH)
+
+	if targetW <= 0 || targetH <= 0 {
+		return DefaultRenderDPI
+	}
+
+	dpiW := (targetW * 72.0) / wPts
+	dpiH := (targetH * 72.0) / hPts
+
+	dpi := dpiW
+	if dpiH < dpi {
+		dpi = dpiH
+	}
+
+	minDPI := 72
+	maxDPI := m.cfg.Limits.MaxRenderDPI
+	if maxDPI <= 0 {
+		maxDPI = 600
+	}
+
+	res := int(dpi)
+	if res < minDPI {
+		res = minDPI
+	}
+	if res > maxDPI {
+		res = maxDPI
+	}
+	return res
 }

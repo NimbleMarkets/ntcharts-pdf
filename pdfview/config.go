@@ -211,6 +211,20 @@ type Config struct {
 	// Renderer. Zero falls back to DefaultRenderDPI.
 	RenderDPI int
 
+	// PageCacheSize controls the number of rasterized page images kept in
+	// memory. Zero defaults to 3; set to a negative value to disable caching.
+	PageCacheSize int
+
+	// DynamicDPI automatically scales the rasterization DPI based on the
+	// widget cell size (Cols/Rows) and the page point dimensions.
+	DynamicDPI bool
+
+	// CellPixelWidth and CellPixelHeight specify the pixel dimensions of a
+	// single terminal cell, used only when DynamicDPI is true. If zero,
+	// defaults to 8x16 pixels per cell.
+	CellPixelWidth  int
+	CellPixelHeight int
+
 	// Limits caps resource consumption for untrusted documents. Zero-
 	// valued fields use sensible defaults (see Limits doc); set a field
 	// to -1 to disable that specific cap for trusted input.

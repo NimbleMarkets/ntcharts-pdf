@@ -41,6 +41,7 @@ type RendererFactory func(name string, data []byte) (Renderer, error)
 type pageRenderedMsg struct {
 	page    int
 	img     image.Image
+	dpi     int
 	gen     uint64
 	loadGen uint64
 }
