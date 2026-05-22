@@ -697,3 +697,148 @@ func TestViewWithoutDocumentShowsStatus(t *testing.T) {
 		t.Error("View() Content is empty; want a no-document placeholder")
 	}
 }
+
+func TestPageCache(t *testing.T) {
+	fake := &fakeRenderer{}
+	m := NewWithConfig(Config{
+		Cols:          80,
+		Rows:          24,
+		PageCacheSize: 3,
+		RendererFactory: fakeFactory(fake),
+	})
+
+	// Setup: load document with 3 pages.
+	gen := bump(m.loadGen)
+	m, _ = m.Update(pdfLoadedMsg{
+		path:     "/tmp/cache-test.pdf",
+		pages:    make([]pdfPage, 3),
+		renderer: fake,
+		gen:      gen,
+	})
+
+	// Verify caching behaviour in ImageMode.
+	m.mode = ImageMode
+
+	// 1. Initial render of page 1.
+	cmd := m.renderPageCmd(1)
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd for page 1 render")
+	}
+	msg := cmd()
+	m, _ = m.Update(msg)
+
+	if fake.calls != 1 {
+		t.Fatalf("expected 1 renderer call, got %d", fake.calls)
+	}
+
+	// 2. Second render of page 1 (should hit cache, calls should not increase).
+	cmd = m.renderPageCmd(1)
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd for page 1 cached render")
+	}
+	msg = cmd()
+	m, _ = m.Update(msg)
+
+	if fake.calls != 1 {
+		t.Fatalf("expected cached hit, calls remained 1, got %d", fake.calls)
+	}
+
+	// 3. Render page 2 (calls = 2).
+	cmd = m.SetPage(2)
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd for page 2 render")
+	}
+	msg = cmd()
+	m, _ = m.Update(msg)
+	if fake.calls != 2 {
+		t.Fatalf("expected 2 calls, got %d", fake.calls)
+	}
+
+	// 4. Render page 3 (calls = 3).
+	cmd = m.SetPage(3)
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd for page 3 render")
+	}
+	msg = cmd()
+	m, _ = m.Update(msg)
+	if fake.calls != 3 {
+		t.Fatalf("expected 3 calls, got %d", fake.calls)
+	}
+
+	// 5. Render page 2 (hit).
+	cmd = m.SetPage(2)
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd for page 2 cached render")
+	}
+	msg = cmd()
+	m, _ = m.Update(msg)
+	if fake.calls != 3 {
+		t.Fatalf("expected cached hit for page 2, calls remained 3, got %d", fake.calls)
+	}
+
+	// 6. Change DPI (should not hit cache).
+	m.cfg.RenderDPI = 150
+	cmd = m.Reload()
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd for reload")
+	}
+	msg = cmd()
+	m, _ = m.Update(msg)
+	if fake.calls != 4 {
+		t.Fatalf("expected new render due to DPI mismatch, calls = 4, got %d", fake.calls)
+	}
+}
+
+func TestDynamicDPI(t *testing.T) {
+	m := NewWithConfig(Config{
+		Cols:       80,
+		Rows:       24,
+		DynamicDPI: true,
+		Limits: Limits{
+			MaxRenderDPI: 300,
+		},
+	})
+
+	// Set up mock document pages with media boxes in points.
+	// Let's make page 1 standard US Letter (612x792 pts).
+	m.docPages = []pdfPage{
+		{
+			media: mediaBox{x0: 0, y0: 0, x1: 612, y1: 792},
+		},
+	}
+
+	// With default cell pixel sizes (8x16):
+	// target width = 80 * 8 = 640 px
+	// target height = 24 * 16 = 384 px
+	// wPts = 612, hPts = 792
+	// dpiW = 640 * 72 / 612 = 75.29
+	// dpiH = 384 * 72 / 792 = 34.90
+	// min(dpiW, dpiH) = 34.90. Clamped to minDPI (72).
+	dpi := m.calcDynamicDPI(1)
+	if dpi != 72 {
+		t.Errorf("expected calcDynamicDPI to yield 72, got %d", dpi)
+	}
+
+	// Now let's change dimensions so that calculated DPI is higher than minDPI but below MaxRenderDPI.
+	// cols = 200, rows = 100
+	// target width = 200 * 8 = 1600 px
+	// target height = 100 * 16 = 1600 px
+	// dpiW = 1600 * 72 / 612 = 188.23
+	// dpiH = 1600 * 72 / 792 = 145.45
+	// min = 145.45 => int(145) = 145
+	m.cols = 200
+	m.rows = 100
+	dpi = m.calcDynamicDPI(1)
+	if dpi != 145 {
+		t.Errorf("expected calcDynamicDPI to yield 145, got %d", dpi)
+	}
+
+	// Test clamping to MaxRenderDPI
+	// cols = 1000, rows = 1000 => DPI would be very large, should clamp to MaxRenderDPI (300).
+	m.cols = 1000
+	m.rows = 1000
+	dpi = m.calcDynamicDPI(1)
+	if dpi != 300 {
+		t.Errorf("expected calcDynamicDPI to clamp to MaxRenderDPI (300), got %d", dpi)
+	}
+}
