@@ -12,15 +12,15 @@ require (
 	charm.land/bubbletea/v2 v2.0.6
 	charm.land/lipgloss/v2 v2.0.3
 	github.com/NimbleMarkets/go-booba v0.6.1-0.20260511134559-58814d532cc1
-	github.com/NimbleMarkets/ntcharts/v2 v2.0.4-0.20260511142858-c7594fa69807
+	github.com/NimbleMarkets/ntcharts/v2 v2.2.0
 	github.com/klippa-app/go-pdfium v1.19.3
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 )
 
 require (
-	github.com/NimbleMarkets/pixterm v0.0.0-20260429102514-4e8bc7f0c8ee // indirect
+	github.com/NimbleMarkets/pixterm v0.0.0-20260501211346-dc18ac6c1a0f // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
-	github.com/charmbracelet/ultraviolet v0.0.0-20260511121909-c840852527f3 // indirect
+	github.com/charmbracelet/ultraviolet v0.0.0-20260525132238-948f4557a654 // indirect
 	github.com/charmbracelet/x/ansi v0.11.7 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
@@ -37,9 +37,9 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/tetratelabs/wazero v1.11.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/image v0.40.0 // indirect
+	golang.org/x/image v0.41.0 // indirect
 	golang.org/x/net v0.54.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.44.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 )
