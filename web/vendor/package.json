@@ -3,6 +3,6 @@
   "private": true,
   "description": "Vendored npm assets for the WASM demo site (web/index.html imports @embedpdf/pdfium via web/pdfium-bridge.js). Use `npm ci` here; Dependabot drives version bumps.",
   "dependencies": {
-    "@embedpdf/pdfium": "2.14.2"
+    "@embedpdf/pdfium": "2.14.4"
   }
 }
