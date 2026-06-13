@@ -14,11 +14,3 @@ updates:
     directory: /
     schedule:
       interval: weekly
-
-  # @embedpdf/pdfium is vendored under web/vendor/ at CI build time.
-  # web/vendor/package.json + package-lock.json are tracked precisely
-  # so this rule can drive version bumps via PR.
-  - package-ecosystem: npm
-    directory: /web/vendor
-    schedule:
-      interval: weekly

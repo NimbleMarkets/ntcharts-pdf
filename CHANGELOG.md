@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## v0.3.0 (2026-06-13)
+
+- **Browser renderer via booba-shim**: The browser-WASM backend now uses
+  [`booba-shim/pdfium`](https://github.com/NimbleMarkets/booba-shim)
+  instead of a private JS bridge. 
+
 ## v0.2.0 (2026-05-22)
 
 ### Added

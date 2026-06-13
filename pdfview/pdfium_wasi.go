@@ -7,8 +7,9 @@
 // rasterizer API).
 //
 // The browser path (GOOS=js GOARCH=wasm) is handled separately in
-// jsbridge_js.go + jsrenderer_js.go, which bridge to the host page's
-// @embedpdf/pdfium instance via syscall/js.
+// jsrenderer_js.go, a thin adapter over the booba-shim/pdfium package
+// which bridges to the host page's @embedpdf/pdfium instance via
+// syscall/js.
 
 //go:build wasm && !js
 

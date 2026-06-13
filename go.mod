@@ -5,12 +5,16 @@ go 1.25.0
 // Awaiting upstream merge of WASM support
 replace charm.land/bubbletea/v2 => github.com/neomantra/bubbletea/v2 v2.0.0-20260506185856-6506c47fa2f3
 
-tool github.com/NimbleMarkets/go-booba/cmd/booba-assets
+tool (
+	github.com/NimbleMarkets/booba-shim/cmd/booba-shim-assets
+	github.com/NimbleMarkets/go-booba/cmd/booba-assets
+)
 
 require (
 	charm.land/bubbles/v2 v2.1.0
 	charm.land/bubbletea/v2 v2.0.6
 	charm.land/lipgloss/v2 v2.0.3
+	github.com/NimbleMarkets/booba-shim v0.1.0
 	github.com/NimbleMarkets/go-booba v0.6.1-0.20260511134559-58814d532cc1
 	github.com/NimbleMarkets/ntcharts/v2 v2.0.4-0.20260511142858-c7594fa69807
 	github.com/klippa-app/go-pdfium v1.19.3

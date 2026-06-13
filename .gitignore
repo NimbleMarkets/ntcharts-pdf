@@ -7,10 +7,4 @@ web/app.wasm
 web/wasm_exec.js
 web/booba/
 web/ghostty-web/
-# npm-installed @embedpdf/pdfium + transitive deps. Regenerated via
-# `task install-pdfium-bridge` (`npm ci` against the tracked
-# package.json/lockfile). The dist itself and node_modules are not
-# committed; only the manifests so Dependabot can drive version bumps.
-web/vendor/*
-!web/vendor/package.json
-!web/vendor/package-lock.json
+web/booba-shim/

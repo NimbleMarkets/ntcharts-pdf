@@ -106,13 +106,11 @@ tasks:
 
   build-wasm-site:
     desc: 'Build the WASM demo site into web/'
-    # ensure-pdfium-bridge guarantees web/index.html's @embedpdf/pdfium
-    # importmap target exists; otherwise the page boots and the JS
-    # console errors immediately on module load.
-    deps: [go-tidy, ensure-pdfium-bridge]
+    deps: [go-tidy]
     cmds:
       - GOARCH=wasm GOOS=js go build -o web/app.wasm ./examples/pdfview/
       - go tool booba-assets web/
+      - go tool booba-shim-assets web/ --shim=pdfium
     generates:
       - web/app.wasm
 
@@ -131,29 +129,6 @@ tasks:
   clean-wasm-site:
     desc: 'Remove WASM demo site artifacts'
     cmds:
-      - rm -rf web/booba web/ghostty-web
+      - rm -rf web/booba web/ghostty-web web/booba-shim
       - rm -f web/wasm_exec.js
       - rm -f web/app.wasm
-
-  ensure-pdfium-bridge:
-    desc: 'Run install-pdfium-bridge only when the vendored dist is missing'
-    # `status` blocks the task body when every listed path exists,
-    # so re-runs are zero-cost; CI / fresh clones run the install once.
-    status:
-      - test -f web/vendor/embedpdf-pdfium/dist/index.js
-    cmds:
-      - task: install-pdfium-bridge
-
-  install-pdfium-bridge:
-    desc: 'Vendor @embedpdf/pdfium under web/vendor/ from the tracked lockfile'
-    # Uses `npm ci` against the committed web/vendor/package.json +
-    # package-lock.json, so local installs and CI both resolve to the
-    # exact same version. Bump via Dependabot (npm ecosystem rule in
-    # .github/dependabot.yml) or `npm install @embedpdf/pdfium@<ver>`
-    # from web/vendor/ followed by committing the updated lockfile.
-    cmds:
-      - cd web/vendor && npm ci --no-fund --no-audit
-      - test -f web/vendor/node_modules/@embedpdf/pdfium/dist/index.js
-        || (echo "@embedpdf/pdfium dist not found — check the package's export layout and update web/index.html importmap" && exit 1)
-      - rm -rf web/vendor/embedpdf-pdfium
-      - cp -R web/vendor/node_modules/@embedpdf/pdfium web/vendor/embedpdf-pdfium

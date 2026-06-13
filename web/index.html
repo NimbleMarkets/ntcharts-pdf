@@ -44,16 +44,7 @@
         #overlay svg { display: block; }
         #overlay img { display: block; border-radius: 6px; }
     </style>
-    <!-- Import map: resolve @embedpdf/pdfium to a concrete URL. Adjust
-         to wherever your bundler / static-asset pipeline puts the
-         module. The example below assumes a sibling vendor copy. -->
-    <script type="importmap">
-    {
-        "imports": {
-            "@embedpdf/pdfium": "./vendor/embedpdf-pdfium/dist/index.js"
-        }
-    }
-    </script>
+
 </head>
 <body>
     <div id="terminal-container"></div>
@@ -78,16 +69,16 @@
     <script src="wasm_exec.js"></script>
     <script type="module">
         import { BoobaTerminal } from './booba/booba.js';
-        // Side-effect import: installs window.ntchartsPDFium and
-        // memoises the PDFium init() so the Go side's first
-        // setupBridge() call resolves quickly.
-        import './pdfium-bridge.js';
+        // Side-effect import: installs window.boobaShim.pdfium and
+        // starts the PDFium wasm download so the Go side's first
+        // pdfium.Load() call resolves quickly.
+        import './booba-shim/pdfium/pdfium-shim.js';
 
         async function main() {
             // Kick off the PDFium init in parallel with the WASM
             // download — by the time the user toggles ImageMode the
             // PDFium runtime is already warm.
-            const pdfiumReady = window.ntchartsPDFium.init();
+            const pdfiumReady = window.boobaShim.pdfium.ready;
 
             // Load and start the Go WASM binary
             const go = new Go();
