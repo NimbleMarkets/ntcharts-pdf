@@ -17,7 +17,7 @@ require (
 	github.com/NimbleMarkets/booba-shim v0.1.0
 	github.com/NimbleMarkets/go-booba v0.6.1-0.20260511134559-58814d532cc1
 	github.com/NimbleMarkets/ntcharts/v2 v2.2.0
-	github.com/klippa-app/go-pdfium v1.19.4
+	github.com/klippa-app/go-pdfium v1.19.8
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 )
 
@@ -42,8 +42,8 @@ require (
 	github.com/tetratelabs/wazero v1.12.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/image v0.42.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 )
