@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## v0.3.1 (2026-09-29)
+
+ - Update Go dependencies, including NTCharts performance improvements.
+
 ## v0.3.0 (2026-06-13)
 
 - **Browser renderer via booba-shim**: The browser-WASM backend now uses
